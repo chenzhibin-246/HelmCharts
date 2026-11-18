@@ -96,8 +96,10 @@ diagnosticMode:
 ##
 image:
   registry: docker.io
-  repository: bitnami/mysql
-  tag: 9.4.0-debian-12-r1
+  repository: library/mysql
+  tag: "8.4.13"
+  ## @param image.flavor Image runtime (auto, official, or bitnami). Use bitnami for private copies with a renamed repository.
+  flavor: auto
   digest: ""
   ## Specify a imagePullPolicy
   ## ref: https://kubernetes.io/docs/concepts/containers/images/#pre-pulled-images
@@ -191,17 +193,19 @@ startdbScripts: {}
 startdbScriptsConfigMap: ""
 ## @section TLS/SSL parameters
 ##
-## @param tls.enabled Enable TLS in MySQL
+## @param tls.enabled Configure MySQL TLS certificates from a Kubernetes Secret
+## @param tls.requireSecureTransport Require TLS for TCP connections with the Docker Official MySQL image
 ## @param tls.existingSecret Existing secret that contains TLS certificates
 ## @param tls.certFilename The secret key from the existingSecret if 'cert' key different from the default (tls.crt)
 ## @param tls.certKeyFilename The secret key from the existingSecret if 'key' key different from the default (tls.key)
-## @param tls.certCAFilename The secret key from the existingSecret if 'ca' key different from the default (tls.crt)
+## @param tls.certCAFilename Key containing the CA certificate in tls.existingSecret (optional)
 ## @param tls.ca CA certificate for TLS. Ignored if `tls.existingSecret` is set
 ## @param tls.cert TLS certificate for MySQL. Ignored if `tls.existingSecret` is set
 ## @param tls.key TLS key for MySQL. Ignored if `tls.existingSecret` is set
 ##
 tls:
-  enabled: false
+  enabled: true
+  requireSecureTransport: false
   existingSecret: ""
   certFilename: tls.crt
   certKeyFilename: tls.key
@@ -258,6 +262,18 @@ primary:
   ## ref: https://mysql.com/kb/en/mysql/configuring-mysql-with-mycnf/#example-of-configuration-file
   ##
   configuration: |-
+    {{- if eq (include "mysql.imageFlavor" .) "official" }}
+    [mysqld]
+    authentication_policy='{{ .Values.auth.authenticationPolicy | default "* ,," }}'
+    skip-name-resolve
+    port={{ .Values.primary.containerPorts.mysql }}
+    mysqlx={{ ternary 1 0 .Values.primary.enableMySQLX }}
+    mysqlx_port={{ .Values.primary.containerPorts.mysqlx }}
+    character-set-server=utf8mb4
+
+    [client]
+    port={{ .Values.primary.containerPorts.mysql }}
+    {{- else }}
     [mysqld]
     authentication_policy='{{- .Values.auth.authenticationPolicy | default "* ,," }}'
     skip-name-resolve
@@ -295,6 +311,7 @@ primary:
     port={{ .Values.primary.containerPorts.mysql }}
     socket=/opt/bitnami/mysql/tmp/mysql.sock
     pid-file=/opt/bitnami/mysql/tmp/mysqld.pid
+    {{- end }}
   ## @param primary.existingConfigmap Name of existing ConfigMap with MySQL Primary configuration.
   ## NOTE: When it's set the 'configuration' parameter is ignored
   ##

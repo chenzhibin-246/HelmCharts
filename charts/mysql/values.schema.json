@@ -2,6 +2,22 @@
   "$schema": "http://json-schema.org/schema#",
   "type": "object",
   "properties": {
+    "image": {
+      "type": "object",
+      "properties": {
+        "flavor": {
+          "enum": ["auto", "official", "bitnami"]
+        }
+      }
+    },
+    "tls": {
+      "type": "object",
+      "properties": {
+        "requireSecureTransport": {
+          "type": "boolean"
+        }
+      }
+    },
     "architecture": {
       "type": "string",
       "title": "MySQL architecture",

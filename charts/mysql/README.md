@@ -1,59 +1,24 @@
 <!--- app-name: MySQL -->
 
-# Bitnami Secure Images Helm chart for MySQL
+# Helm chart for MySQL 8.4 LTS
 
-MySQL is a fast, reliable, scalable, and easy to use open source relational database system. Designed to handle mission-critical, heavy-load production applications.
+This chart is derived from the Bitnami MySQL chart and defaults to the [Docker Official MySQL image](https://hub.docker.com/_/mysql) `docker.io/library/mysql:8.4.13`.
 
-[Overview of MySQL](http://www.mysql.com)
+## Install
 
-Trademarks: This software listing is packaged by Bitnami. The respective trademarks mentioned in the offering are owned by the respective companies, and use of them does not imply any affiliation or endorsement.
+From the root of the repository, install the chart as a new release with a fresh volume.
 
-## TL;DR
-
-```console
-helm install my-release oci://registry-1.docker.io/bitnamicharts/mysql
+```bash
+helm install my-release ./charts/mysql --namespace default
 ```
 
-## Why use Bitnami Secure Images?
+The chart uses the cluster's default StorageClass unless you set `primary.persistence.storageClass`. To use a mirrored copy of the Docker Official image, set `image.registry`, `image.repository`, and `image.tag` or `image.digest`. Use `image.pullSecrets` for registry credentials. Changing the repository or registry also requires `global.security.allowInsecureImages=true` to accept the new image reference in the chart's allowlist check. This flag does not alter TLS verification for registry connections.
 
-Those are hardened, minimal CVE images built and maintained by Bitnami. Bitnami Secure Images are based on the cloud-optimized, security-hardened enterprise [OS Photon Linux](https://vmware.github.io/photon/). Why choose BSI images?
+## Image compatibility and data
 
-- Hardened secure images of popular open source software with Near-Zero Vulnerabilities
-- Vulnerability Triage & Prioritization with VEX Statements, KEV and EPSS Scores
-- Compliance focus with FIPS, STIG, and air-gap options, including secure bill of materials (SBOM)
-- Software supply chain provenance attestation through in-toto
-- First class support for the internet’s favorite Helm charts
-
-Each image comes with valuable security metadata. You can view the metadata in [our public catalog here](https://app-catalog.vmware.com/bitnami/apps). Note: Some data is only available with [commercial subscriptions to BSI](https://bitnami.com/).
-
-![Alt text](https://github.com/bitnami/containers/blob/main/BSI%20UI%201.png?raw=true "Application details")
-![Alt text](https://github.com/bitnami/containers/blob/main/BSI%20UI%202.png?raw=true "Packaging report")
-
-If you are looking for our previous generation of images based on Debian Linux, please see the [Bitnami Legacy registry](https://hub.docker.com/u/bitnamilegacy).
-
-## Introduction
-
-This chart bootstraps a [MySQL](https://github.com/bitnami/containers/tree/main/bitnami/mysql) replication cluster deployment on a [Kubernetes](https://kubernetes.io) cluster using the [Helm](https://helm.sh) package manager.
-
-## Prerequisites
-
-- Kubernetes 1.23+
-- Helm 3.8.0+
-- PV provisioner support in the underlying infrastructure
-
-## Installing the Chart
-
-To install the chart with the release name `my-release`:
-
-```console
-helm install my-release oci://REGISTRY_NAME/REPOSITORY_NAME/mysql
-```
-
-> Note: You need to substitute the placeholders `REGISTRY_NAME` and `REPOSITORY_NAME` with a reference to your Helm chart registry and repository. For example, in the case of Bitnami, you need to use `REGISTRY_NAME=registry-1.docker.io` and `REPOSITORY_NAME=bitnamicharts`.
-
-These commands deploy MySQL on the Kubernetes cluster in the default configuration. The [Parameters](#parameters) section lists the parameters that can be configured during installation.
-
-> **Tip**: List all releases using `helm list`
+- The Docker Official image runs the standalone topology. It uses `/var/lib/mysql` for data, `/etc/mysql/conf.d/99-chart.cnf` for custom configuration, and `/docker-entrypoint-initdb.d` for first-start initialization scripts.
+- The Bitnami runtime is available for existing Bitnami-based deployments, including replication, start scripts, and the password update job. Select a compatible `image.repository` and `image.tag` and set `image.flavor=bitnami` if the image was mirrored under a different repository name.
+- MySQL 9.4 data directories require a separate migration to MySQL 8.4. Create a new release and volume, then check compatibility of a logical dump before restoring it. This also applies to the previous Bitnami-based test release.
 
 ## Configuration and installation details
 
@@ -145,7 +110,7 @@ initContainers:
 
 ### Securing traffic using TLS
 
-This chart supports encrypting communications using TLS. To enable this feature, set the `tls.enabled`.
+The chart defaults to `tls.enabled=true` and generates a certificate and CA for the MySQL Service. Set `tls.requireSecureTransport=true` with the Docker Official image to require TLS for TCP connections. Clients can set `--ssl-mode=VERIFY_IDENTITY` and trust the CA via `--ssl-ca`. Use the Service DNS name that appears in the server certificate.
 
 It is necessary to create a secret containing the TLS certificates and pass it to the chart via the `tls.existingSecret` parameter. Every secret should contain a `tls.crt` and `tls.key` keys including the certificate and key files respectively and, optionally, a `ca.crt` key including the CA certificate. For example: create the secret with the certificates files:
 
@@ -274,8 +239,10 @@ If you encounter errors when working with persistent volumes, refer to our [trou
 
 | Name                        | Description                                                                                                                                                                         | Value                   |
 | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
-| `image.registry`            | MySQL image registry                                                                                                                                                                | `REGISTRY_NAME`         |
-| `image.repository`          | MySQL image repository                                                                                                                                                              | `REPOSITORY_NAME/mysql` |
+| `image.registry` | MySQL image registry | `docker.io` |
+| `image.repository` | MySQL image repository | `library/mysql` |
+| `image.tag` | MySQL image tag | `8.4.13` |
+| `image.flavor` | Image runtime (auto, official, or bitnami) | `auto` |
 | `image.digest`              | MySQL image digest in the way sha256:aa.... Please note this parameter, if set, will override the tag                                                                               | `""`                    |
 | `image.pullPolicy`          | MySQL image pull policy                                                                                                                                                             | `IfNotPresent`          |
 | `image.pullSecrets`         | Specify docker-registry secret names as an array                                                                                                                                    | `[]`                    |
@@ -301,7 +268,8 @@ If you encounter errors when working with persistent volumes, refer to our [trou
 
 | Name                                               | Description                                                                                            | Value     |
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | --------- |
-| `tls.enabled`                                      | Enable TLS in MySQL                                                                                    | `false`   |
+| `tls.enabled` | Configure server TLS with a Kubernetes Secret | `true` |
+| `tls.requireSecureTransport` | Require TLS for TCP connections with the Docker Official image | `false` |
 | `tls.existingSecret`                               | Existing secret that contains TLS certificates                                                         | `""`      |
 | `tls.certFilename`                                 | The secret key from the existingSecret if 'cert' key different from the default (tls.crt)              | `tls.crt` |
 | `tls.certKeyFilename`                              | The secret key from the existingSecret if 'key' key different from the default (tls.key)               | `tls.key` |

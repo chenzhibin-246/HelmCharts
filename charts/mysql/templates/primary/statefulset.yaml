@@ -3,6 +3,25 @@ Copyright Broadcom, Inc. All Rights Reserved.
 SPDX-License-Identifier: APACHE-2.0
 */}}
 
+{{- include "mysql.validateImageFlavor" . }}
+{{- $official := eq (include "mysql.imageFlavor" .) "official" }}
+{{- $dataDir := ternary "/var/lib/mysql" "/bitnami/mysql" $official }}
+{{- $credentialsDir := ternary "/run/secrets/mysql" "/opt/bitnami/mysql/secrets" $official }}
+{{- $manageVolumePermissions := and .Values.primary.enableDefaultInitContainers .Values.primary.podSecurityContext.enabled .Values.volumePermissions.enabled .Values.primary.persistence.enabled }}
+{{- if and .Release.IsUpgrade .Values.primary.persistence.enabled }}
+  {{- with (lookup "apps/v1" "StatefulSet" (include "common.names.namespace" .) (include "mysql.primary.fullname" .)) }}
+    {{- range .spec.template.spec.containers }}
+      {{- if eq .name "mysql" }}
+        {{- range .volumeMounts }}
+          {{- if and (eq .name "data") (ne .mountPath $dataDir) }}
+            {{- fail "The MySQL image uses a different volume layout. Install into a fresh PVC and migrate the data using a logical dump and restore." }}
+          {{- end }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+
 apiVersion: {{ include "common.capabilities.statefulset.apiVersion" . }}
 kind: StatefulSet
 metadata:
@@ -83,9 +102,9 @@ spec:
       {{- if .Values.primary.terminationGracePeriodSeconds }}
       terminationGracePeriodSeconds: {{ .Values.primary.terminationGracePeriodSeconds }}
       {{- end }}
-      {{- if or .Values.primary.enableDefaultInitContainers .Values.primary.initContainers }}
+      {{- if or (and (not $official) .Values.primary.enableDefaultInitContainers) $manageVolumePermissions .Values.primary.initContainers }}
       initContainers:
-        {{- if .Values.primary.enableDefaultInitContainers }}
+        {{- if and (not $official) .Values.primary.enableDefaultInitContainers }}
         - name: preserve-logs-symlinks
           image: {{ include "mysql.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy | quote }}
@@ -112,17 +131,22 @@ spec:
           volumeMounts:
             - name: empty-dir
               mountPath: /emptydir
-        {{- if and .Values.primary.podSecurityContext.enabled .Values.volumePermissions.enabled .Values.primary.persistence.enabled }}
+        {{- end }}
+        {{- if $manageVolumePermissions }}
         - name: volume-permissions
+          {{- if $official }}
+          image: {{ include "mysql.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | quote }}
+          {{- else }}
           image: {{ include "mysql.volumePermissions.image" . }}
           imagePullPolicy: {{ .Values.volumePermissions.image.pullPolicy | quote }}
+          {{- end }}
           command:
             - /bin/bash
             - -ec
             - |
-              mkdir -p "/bitnami/mysql"
-              chown "{{ .Values.primary.containerSecurityContext.runAsUser }}:{{ .Values.primary.podSecurityContext.fsGroup }}" "/bitnami/mysql"
-              find "/bitnami/mysql" -mindepth 1 -maxdepth 1 -not -name ".snapshot" -not -name "lost+found" | xargs -r chown -R "{{ .Values.primary.containerSecurityContext.runAsUser }}:{{ .Values.primary.podSecurityContext.fsGroup }}"
+              chown "{{ .Values.primary.containerSecurityContext.runAsUser }}:{{ .Values.primary.podSecurityContext.fsGroup }}" "{{ $dataDir }}"
+              find "{{ $dataDir }}" -mindepth 1 -maxdepth 1 -not -name ".snapshot" -not -name "lost+found" -exec chown -R "{{ .Values.primary.containerSecurityContext.runAsUser }}:{{ .Values.primary.podSecurityContext.fsGroup }}" {} +
           securityContext:
             runAsUser: 0
           {{- if .Values.volumePermissions.resources }}
@@ -132,14 +156,13 @@ spec:
           {{- end }}
           volumeMounts:
             - name: data
-              mountPath: /bitnami/mysql
+              mountPath: {{ $dataDir }}
               {{- if .Values.primary.persistence.subPath }}
               subPath: {{ .Values.primary.persistence.subPath }}
               {{- end }}
             - name: empty-dir
               mountPath: /tmp
               subPath: tmp-dir
-        {{- end }}
         {{- end }}
         {{- if .Values.primary.initContainers }}
         {{- include "common.tplvalues.render" (dict "value" .Values.primary.initContainers "context" $) | nindent 8 }}
@@ -159,6 +182,8 @@ spec:
           {{- end }}
           {{- if .Values.diagnosticMode.enabled }}
           args: {{- include "common.tplvalues.render" (dict "value" .Values.diagnosticMode.args "context" $) | nindent 12 }}
+          {{- else if $official }}
+          {{- include "mysql.officialArgs" . | nindent 10 }}
           {{- else if .Values.primary.args }}
           args: {{- include "common.tplvalues.render" (dict "value" .Values.primary.args "context" $) | nindent 12 }}
           {{- end }}
@@ -166,11 +191,13 @@ spec:
           lifecycle: {{- include "common.tplvalues.render" (dict "value" .Values.primary.lifecycleHooks "context" $) | nindent 12 }}
           {{- end }}
           env:
+            {{- if not $official }}
             - name: BITNAMI_DEBUG
               value: {{ ternary "true" "false" (or .Values.image.debug .Values.diagnosticMode.enabled) | quote }}
+            {{- end }}
             {{- if .Values.auth.usePasswordFiles }}
             - name: MYSQL_ROOT_PASSWORD_FILE
-              value: {{ default "/opt/bitnami/mysql/secrets/mysql-root-password" .Values.auth.customPasswordFiles.root }}
+              value: {{ default (printf "%s/mysql-root-password" $credentialsDir) .Values.auth.customPasswordFiles.root | quote }}
             {{- else }}
             - name: MYSQL_ROOT_PASSWORD
               valueFrom:
@@ -178,18 +205,20 @@ spec:
                   name: {{ template "mysql.secretName" . }}
                   key: mysql-root-password
             {{- end }}
+            {{- if not $official }}
             - name: MYSQL_ENABLE_SSL
               value: {{ ternary "yes" "no" .Values.tls.enabled | quote }}
             {{- if and .Values.tls.enabled (include "mysql.tlsCACert" .) }}
             - name: MYSQL_CLIENT_CA_FILE
               value: {{ include "mysql.tlsCACert" . | quote }}
             {{- end }}
+            {{- end }}
             {{- if not (empty .Values.auth.username) }}
             - name: MYSQL_USER
               value: {{ .Values.auth.username | quote }}
             {{- if .Values.auth.usePasswordFiles }}
             - name: MYSQL_PASSWORD_FILE
-              value: {{ default "/opt/bitnami/mysql/secrets/mysql-password" .Values.auth.customPasswordFiles.user }}
+              value: {{ default (printf "%s/mysql-password" $credentialsDir) .Values.auth.customPasswordFiles.user | quote }}
             {{- else }}
             - name: MYSQL_PASSWORD
               valueFrom:
@@ -198,8 +227,10 @@ spec:
                   key: mysql-password
             {{- end }}
             {{- end }}
+            {{- if not $official }}
             - name: MYSQL_PORT
               value: {{ .Values.primary.containerPorts.mysql | quote}}
+            {{- end }}
             {{- if and .Values.auth.createDatabase .Values.auth.database }}
             - name: MYSQL_DATABASE
               value: {{ .Values.auth.database | quote }}
@@ -220,7 +251,7 @@ spec:
                   key: mysql-replication-password
             {{- end }}
             {{- end }}
-            {{- if .Values.primary.extraFlags }}
+            {{- if and (not $official) .Values.primary.extraFlags }}
             - name: MYSQL_EXTRA_FLAGS
               value: "{{ .Values.primary.extraFlags }}"
             {{- end }}
@@ -239,7 +270,7 @@ spec:
           ports:
             - name: mysql
               containerPort: {{ .Values.primary.containerPorts.mysql }}
-            {{- if .Values.secondary.enableMySQLX }}
+            {{- if .Values.primary.enableMySQLX }}
             - name: mysqlx
               containerPort: {{ .Values.primary.containerPorts.mysqlx }}
             {{- end }}
@@ -251,6 +282,10 @@ spec:
           livenessProbe: {{- include "common.tplvalues.render" (dict "value" .Values.primary.customLivenessProbe "context" $) | nindent 12 }}
           {{- else if .Values.primary.livenessProbe.enabled }}
           livenessProbe: {{- include "common.tplvalues.render" (dict "value" (omit .Values.primary.livenessProbe "enabled") "context" $) | nindent 12 }}
+            {{- if $official }}
+            tcpSocket:
+              port: mysql
+            {{- else }}
             exec:
               command:
                 - /bin/bash
@@ -261,11 +296,16 @@ spec:
                       password_aux=$(cat "$MYSQL_ROOT_PASSWORD_FILE")
                   fi
                   mysqladmin status -uroot -p"${password_aux}"
+            {{- end }}
           {{- end }}
           {{- if .Values.primary.customReadinessProbe }}
           readinessProbe: {{- include "common.tplvalues.render" (dict "value" .Values.primary.customReadinessProbe "context" $) | nindent 12 }}
           {{- else if .Values.primary.readinessProbe.enabled }}
           readinessProbe: {{- include "common.tplvalues.render" (dict "value" (omit .Values.primary.readinessProbe "enabled") "context" $) | nindent 12 }}
+            {{- if $official }}
+            tcpSocket:
+              port: mysql
+            {{- else }}
             exec:
               command:
                 - /bin/bash
@@ -276,11 +316,16 @@ spec:
                       password_aux=$(cat "$MYSQL_ROOT_PASSWORD_FILE")
                   fi
                   mysqladmin ping -uroot -p"${password_aux}" | grep "mysqld is alive"
+            {{- end }}
           {{- end }}
           {{- if .Values.primary.customStartupProbe }}
           startupProbe: {{- include "common.tplvalues.render" (dict "value" .Values.primary.customStartupProbe "context" $) | nindent 12 }}
           {{- else if .Values.primary.startupProbe.enabled }}
           startupProbe: {{- include "common.tplvalues.render" (dict "value" (omit .Values.primary.startupProbe "enabled") "context" $) | nindent 12 }}
+            {{- if $official }}
+            tcpSocket:
+              port: mysql
+            {{- else }}
             exec:
               command:
                 - /bin/bash
@@ -291,6 +336,7 @@ spec:
                       password_aux=$(cat "$MYSQL_ROOT_PASSWORD_FILE")
                   fi
                   mysqladmin ping -uroot -p"${password_aux}" | grep "mysqld is alive"
+            {{- end }}
           {{- end }}
           {{- end }}
           {{- if .Values.primary.resources }}
@@ -300,13 +346,21 @@ spec:
           {{- end }}
           volumeMounts:
             - name: data
-              mountPath: /bitnami/mysql
+              mountPath: {{ $dataDir }}
               {{- if .Values.primary.persistence.subPath }}
               subPath: {{ .Values.primary.persistence.subPath }}
               {{- end }}
             - name: empty-dir
               mountPath: /tmp
               subPath: tmp-dir
+            {{- if $official }}
+            - name: empty-dir
+              mountPath: /var/run/mysqld
+              subPath: run-dir
+            - name: empty-dir
+              mountPath: /var/lib/mysql-files
+              subPath: mysql-files-dir
+            {{- else }}
             - name: empty-dir
               mountPath: /opt/bitnami/mysql/conf
               subPath: app-conf-dir
@@ -316,9 +370,11 @@ spec:
             - name: empty-dir
               mountPath: /opt/bitnami/mysql/logs
               subPath: app-logs-dir
+            {{- end }}
             {{- if .Values.tls.enabled }}
             - name: cert
-              mountPath: /opt/bitnami/mysql/certs
+              mountPath: {{ include "mysql.tls.directory" . }}
+              readOnly: true
             {{- end }}
             {{- if or .Values.initdbScriptsConfigMap .Values.initdbScripts }}
             - name: custom-init-scripts
@@ -330,12 +386,18 @@ spec:
             {{- end }}
             {{- if or .Values.primary.configuration .Values.primary.existingConfigmap }}
             - name: config
+              {{- if $official }}
+              mountPath: /etc/mysql/conf.d/99-chart.cnf
+              {{- else }}
               mountPath: /opt/bitnami/mysql/conf/my.cnf
+              {{- end }}
               subPath: my.cnf
+              readOnly: true
             {{- end }}
             {{- if and .Values.auth.usePasswordFiles (not .Values.auth.customPasswordFiles) }}
             - name: mysql-credentials
-              mountPath: /opt/bitnami/mysql/secrets/
+              mountPath: {{ $credentialsDir }}
+              readOnly: true
             {{- end }}
             {{- if .Values.primary.extraVolumeMounts }}
             {{- include "common.tplvalues.render" (dict "value" .Values.primary.extraVolumeMounts "context" $) | nindent 12 }}
@@ -429,8 +491,10 @@ spec:
             items:
               - key: mysql-root-password
                 path: mysql-root-password
+              {{- if or (not $official) .Values.auth.username .Values.metrics.enabled }}
               - key: mysql-password
                 path: mysql-password
+              {{- end }}
               {{- if eq .Values.architecture "replication" }}
               - key: mysql-replication-password
                 path: mysql-replication-password

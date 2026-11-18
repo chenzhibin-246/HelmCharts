@@ -4,6 +4,8 @@
 annotations:
   images: |
     - name: mysql
+      image: docker.io/library/mysql:8.4.13
+    - name: mysql-bitnami
       image: docker.io/bitnami/mysql:9.4.0-debian-12-r1
     - name: mysqld-exporter
       image: docker.io/bitnami/mysqld-exporter:0.17.2-debian-12-r16
@@ -12,7 +14,7 @@ annotations:
   licenses: Apache-2.0
   tanzuCategory: service
 apiVersion: v2
-appVersion: 9.4.0
+appVersion: "8.4.13"
 dependencies:
 - name: common
   repository: ""
@@ -35,4 +37,4 @@ maintainers:
 name: mysql
 sources:
 - https://github.com/bitnami/charts/tree/main/bitnami/mysql
-version: 14.0.5+helm4.1
+version: 15.0.0
