@@ -1,0 +1,205 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "mysql.fullname" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "mysql.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  serviceName: {{ include "mysql.headlessServiceName" . }}
+  replicas: {{ .Values.primary.replicaCount }}
+  podManagementPolicy: {{ .Values.primary.podManagementPolicy }}
+  selector:
+    matchLabels:
+      {{- include "mysql.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mysql.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: primary
+    spec:
+      terminationGracePeriodSeconds: 30
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.primary.podSecurityContext.enabled }}
+      securityContext:
+        fsGroup: {{ .Values.primary.podSecurityContext.fsGroup }}
+        fsGroupChangePolicy: {{ .Values.primary.podSecurityContext.fsGroupChangePolicy }}
+      {{- end }}
+      containers:
+        - name: mysql
+          image: {{ include "mysql.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if .Values.primary.containerSecurityContext.enabled }}
+          securityContext:
+            {{- include "mysql.containerSecurityContext" . | nindent 12 }}
+          {{- end }}
+          args:
+            - mysqld
+            {{- if .Values.tls.enabled }}
+            - --ssl-cert=/etc/mysql/tls/{{ .Values.tls.certFilename }}
+            - --ssl-key=/etc/mysql/tls/{{ .Values.tls.keyFilename }}
+            - --ssl-ca=/etc/mysql/tls/{{ .Values.tls.caFilename }}
+            {{- if .Values.tls.requireSecureTransport }}
+            - --require-secure-transport=ON
+            {{- end }}
+            {{- end }}
+          env:
+            - name: MYSQL_ROOT_PASSWORD_FILE
+              value: /run/secrets/mysql/mysql-root-password
+            {{- if .Values.auth.username }}
+            - name: MYSQL_USER
+              value: {{ .Values.auth.username | quote }}
+            - name: MYSQL_PASSWORD_FILE
+              value: /run/secrets/mysql/mysql-password
+            {{- end }}
+            {{- if .Values.auth.database }}
+            - name: MYSQL_DATABASE
+              value: {{ .Values.auth.database | quote }}
+            {{- end }}
+            {{- with .Values.primary.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.primary.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: mysql
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          {{- if .Values.primary.startupProbe.enabled }}
+          startupProbe:
+            tcpSocket:
+              port: mysql
+            initialDelaySeconds: {{ .Values.primary.startupProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.primary.startupProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.primary.startupProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.primary.startupProbe.failureThreshold }}
+          {{- end }}
+          {{- if .Values.primary.readinessProbe.enabled }}
+          readinessProbe:
+            tcpSocket:
+              port: mysql
+            initialDelaySeconds: {{ .Values.primary.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.primary.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.primary.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.primary.readinessProbe.failureThreshold }}
+          {{- end }}
+          {{- if .Values.primary.livenessProbe.enabled }}
+          livenessProbe:
+            tcpSocket:
+              port: mysql
+            initialDelaySeconds: {{ .Values.primary.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.primary.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.primary.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.primary.livenessProbe.failureThreshold }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.primary.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+            - name: runtime
+              mountPath: /tmp
+              subPath: tmp
+            - name: runtime
+              mountPath: /var/run/mysqld
+              subPath: run
+            - name: runtime
+              mountPath: /var/lib/mysql-files
+              subPath: mysql-files
+            - name: config
+              mountPath: /etc/mysql/conf.d/99-chart.cnf
+              subPath: my.cnf
+              readOnly: true
+            - name: credentials
+              mountPath: /run/secrets/mysql
+              readOnly: true
+            {{- if .Values.tls.enabled }}
+            - name: tls
+              mountPath: /etc/mysql/tls
+              readOnly: true
+            {{- end }}
+            {{- if .Values.initdbScripts }}
+            - name: initdb
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+            {{- end }}
+            {{- with .Values.primary.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      {{- with .Values.primary.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.primary.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.primary.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: runtime
+          emptyDir: {}
+        - name: config
+          configMap:
+            name: {{ include "mysql.fullname" . }}
+        - name: credentials
+          secret:
+            secretName: {{ include "mysql.secretName" . }}
+            items:
+              - key: {{ if .Values.auth.existingSecret }}{{ .Values.auth.existingSecretKeys.rootPassword }}{{ else }}mysql-root-password{{ end }}
+                path: mysql-root-password
+              {{- if .Values.auth.username }}
+              - key: {{ if .Values.auth.existingSecret }}{{ .Values.auth.existingSecretKeys.password }}{{ else }}mysql-password{{ end }}
+                path: mysql-password
+              {{- end }}
+        {{- if .Values.tls.enabled }}
+        - name: tls
+          secret:
+            secretName: {{ default (include "mysql.tlsSecretName" .) .Values.tls.existingSecret }}
+            items:
+              - key: {{ .Values.tls.certFilename }}
+                path: {{ .Values.tls.certFilename }}
+              - key: {{ .Values.tls.keyFilename }}
+                path: {{ .Values.tls.keyFilename }}
+              - key: {{ .Values.tls.caFilename }}
+                path: {{ .Values.tls.caFilename }}
+        {{- end }}
+        {{- if .Values.initdbScripts }}
+        - name: initdb
+          configMap:
+            name: {{ include "mysql.fullname" . }}-initdb
+        {{- end }}
+        {{- with .Values.primary.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+  {{- if .Values.primary.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "mysql.selectorLabels" . | nindent 10 }}
+        {{- with .Values.primary.persistence.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      spec:
+        accessModes:
+          {{- toYaml .Values.primary.persistence.accessModes | nindent 10 }}
+        resources:
+          requests:
+            storage: {{ .Values.primary.persistence.size }}
+        {{- if .Values.primary.persistence.storageClass }}
+        storageClassName: {{ .Values.primary.persistence.storageClass | quote }}
+        {{- end }}
+  {{- end }}

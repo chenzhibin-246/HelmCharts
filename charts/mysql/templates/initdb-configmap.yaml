@@ -1,0 +1,14 @@
+{{- if .Values.initdbScripts }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mysql.fullname" . }}-initdb
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "mysql.labels" . | nindent 4 }}
+data:
+  {{- range $name, $script := .Values.initdbScripts }}
+  {{ $name }}: |
+    {{- tpl $script $ | nindent 4 }}
+  {{- end }}
+{{- end }}
