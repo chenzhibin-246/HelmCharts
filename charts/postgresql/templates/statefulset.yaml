@@ -37,7 +37,7 @@ spec:
           args:
             - postgres
             - -c
-            - config_file=/etc/postgresql/postgresql.conf
+            - config_file=/tmp/postgresql.conf
             {{- range .Values.postgresql.initdbArgs }}
             - {{ . | quote }}
             {{- end }}
@@ -90,7 +90,7 @@ spec:
             - name: runtime
               mountPath: /var/run/postgresql
             - name: config
-              mountPath: /etc/postgresql/postgresql.conf
+              mountPath: /tmp/postgresql.conf
               subPath: postgresql.conf
               readOnly: true
             - name: credentials
