@@ -1,0 +1,11 @@
+apiVersion: v2
+name: postgresql
+description: A standalone Helm chart for PostgreSQL 16
+type: application
+version: 1.0.0
+appVersion: "16.16"
+home: https://www.postgresql.org/
+sources:
+  - https://github.com/docker-library/postgres
+maintainers:
+  - name: chenzhibin-246

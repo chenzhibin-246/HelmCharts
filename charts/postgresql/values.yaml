@@ -1,0 +1,75 @@
+nameOverride: ""
+fullnameOverride: ""
+image:
+  registry: docker.io
+  repository: library/postgres
+  tag: "16.16"
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+auth:
+  postgresPassword: ""
+  username: ""
+  password: ""
+  database: ""
+  existingSecret: ""
+  existingSecretKeys:
+    postgresPassword: postgres-password
+    password: password
+postgresql:
+  configuration: |
+    listen_addresses = '*'
+    password_encryption = scram-sha-256
+  initdbArgs: []
+initdbScripts: {}
+service:
+  type: ClusterIP
+  port: 5432
+  annotations: {}
+  sessionAffinity: None
+primary:
+  replicaCount: 1
+  podManagementPolicy: OrderedReady
+  podSecurityContext:
+    enabled: true
+    fsGroup: 999
+    fsGroupChangePolicy: OnRootMismatch
+  containerSecurityContext:
+    enabled: true
+    runAsUser: 999
+    runAsGroup: 999
+    runAsNonRoot: true
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+  resources:
+    requests: {cpu: 250m, memory: 256Mi}
+    limits: {cpu: 500m, memory: 512Mi}
+  readinessProbe:
+    enabled: true
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 6
+  livenessProbe:
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 6
+  persistence:
+    enabled: true
+    storageClass: ""
+    accessModes: [ReadWriteOnce]
+    size: 8Gi
+    annotations: {}
+  extraEnv: []
+  extraEnvFrom: []
+  extraVolumes: []
+  extraVolumeMounts: []
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+networkPolicy:
+  enabled: false
+  allowExternal: true
+commonLabels: {}
+commonAnnotations: {}

@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "image": { "type": "object", "properties": { "repository": { "type": "string", "minLength": 1 }, "tag": { "type": "string", "pattern": "^16([.]\\d+)?$" }, "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] } } },
+    "auth": { "type": "object", "properties": { "postgresPassword": { "type": "string" }, "username": { "type": "string", "pattern": "^[A-Za-z0-9_]*$" }, "password": { "type": "string" }, "database": { "type": "string", "pattern": "^[A-Za-z0-9_]*$" }, "existingSecret": { "type": "string" } } },
+    "primary": { "type": "object", "properties": { "replicaCount": { "const": 1 }, "persistence": { "type": "object", "properties": { "enabled": { "type": "boolean" }, "size": { "type": "string" } } } } }
+  }
+}

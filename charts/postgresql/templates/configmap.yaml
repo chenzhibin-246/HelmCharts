@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "postgresql.fullname" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "postgresql.labels" . | nindent 4 }}
+data:
+  postgresql.conf: |
+    {{- tpl .Values.postgresql.configuration . | nindent 4 }}
+{{- if .Values.initdbScripts }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "postgresql.fullname" . }}-initdb
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "postgresql.labels" . | nindent 4 }}
+data:
+  {{- range $name, $script := .Values.initdbScripts }}
+  {{ $name }}: |
+    {{- tpl $script $ | nindent 4 }}
+  {{- end }}
+{{- end }}

@@ -1,0 +1,150 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "postgresql.fullname" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "postgresql.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "postgresql.headlessServiceName" . }}
+  replicas: {{ .Values.primary.replicaCount }}
+  podManagementPolicy: {{ .Values.primary.podManagementPolicy }}
+  selector:
+    matchLabels:
+      {{- include "postgresql.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "postgresql.selectorLabels" . | nindent 8 }}
+    spec:
+      terminationGracePeriodSeconds: 30
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.primary.podSecurityContext.enabled }}
+      securityContext:
+        fsGroup: {{ .Values.primary.podSecurityContext.fsGroup }}
+        fsGroupChangePolicy: {{ .Values.primary.podSecurityContext.fsGroupChangePolicy }}
+      {{- end }}
+      containers:
+        - name: postgresql
+          image: {{ include "postgresql.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if .Values.primary.containerSecurityContext.enabled }}
+          securityContext:
+            {{- include "postgresql.containerSecurityContext" . | nindent 12 }}
+          {{- end }}
+          args:
+            - postgres
+            - -c
+            - config_file=/etc/postgresql/postgresql.conf
+            {{- range .Values.postgresql.initdbArgs }}
+            - {{ . | quote }}
+            {{- end }}
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            {{- if .Values.auth.username }}
+            - name: POSTGRES_USER
+              value: {{ .Values.auth.username | quote }}
+            - name: POSTGRES_PASSWORD_FILE
+              value: /run/secrets/postgresql/password
+            {{- else }}
+            - name: POSTGRES_PASSWORD_FILE
+              value: /run/secrets/postgresql/postgres-password
+            {{- end }}
+            {{- if .Values.auth.database }}
+            - name: POSTGRES_DB
+              value: {{ .Values.auth.database | quote }}
+            {{- end }}
+            {{- with .Values.primary.extraEnv }}{{ toYaml . | nindent 12 }}{{- end }}
+          {{- with .Values.primary.extraEnvFrom }}
+          envFrom: {{ toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: postgresql
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          {{- if .Values.primary.readinessProbe.enabled }}
+          readinessProbe:
+            exec:
+              command: ["/bin/sh", "-ec", "pg_isready -h 127.0.0.1 -p {{ .Values.service.port }} -U {{ default "postgres" .Values.auth.username }}"]
+            initialDelaySeconds: {{ .Values.primary.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.primary.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.primary.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.primary.readinessProbe.failureThreshold }}
+          {{- end }}
+          {{- if .Values.primary.livenessProbe.enabled }}
+          livenessProbe:
+            exec:
+              command: ["/bin/sh", "-ec", "pg_isready -h 127.0.0.1 -p {{ .Values.service.port }} -U {{ default "postgres" .Values.auth.username }}"]
+            initialDelaySeconds: {{ .Values.primary.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.primary.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.primary.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.primary.livenessProbe.failureThreshold }}
+          {{- end }}
+          resources: {{ toYaml .Values.primary.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: runtime
+              mountPath: /var/run/postgresql
+            - name: config
+              mountPath: /etc/postgresql/postgresql.conf
+              subPath: postgresql.conf
+              readOnly: true
+            - name: credentials
+              mountPath: /run/secrets/postgresql
+              readOnly: true
+            {{- if .Values.initdbScripts }}
+            - name: initdb
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+            {{- end }}
+            {{- with .Values.primary.extraVolumeMounts }}{{ toYaml . | nindent 12 }}{{- end }}
+      {{- with .Values.primary.nodeSelector }}
+      nodeSelector: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.primary.tolerations }}
+      tolerations: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.primary.affinity }}
+      affinity: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: runtime
+          emptyDir: {}
+        - name: config
+          configMap:
+            name: {{ include "postgresql.fullname" . }}
+        - name: credentials
+          secret:
+            secretName: {{ include "postgresql.secretName" . }}
+            items:
+              - key: {{ if .Values.auth.existingSecret }}{{ .Values.auth.existingSecretKeys.postgresPassword }}{{ else }}postgres-password{{ end }}
+                path: postgres-password
+              {{- if .Values.auth.username }}
+              - key: {{ if .Values.auth.existingSecret }}{{ .Values.auth.existingSecretKeys.password }}{{ else }}password{{ end }}
+                path: password
+              {{- end }}
+        {{- if .Values.initdbScripts }}
+        - name: initdb
+          configMap:
+            name: {{ include "postgresql.fullname" . }}-initdb
+        {{- end }}
+        {{- with .Values.primary.extraVolumes }}{{ toYaml . | nindent 8 }}{{- end }}
+  {{- if .Values.primary.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "postgresql.selectorLabels" . | nindent 10 }}
+      spec:
+        accessModes: {{ toYaml .Values.primary.persistence.accessModes | nindent 10 }}
+        resources:
+          requests:
+            storage: {{ .Values.primary.persistence.size }}
+        {{- if .Values.primary.persistence.storageClass }}
+        storageClassName: {{ .Values.primary.persistence.storageClass | quote }}
+        {{- end }}
+  {{- end }}

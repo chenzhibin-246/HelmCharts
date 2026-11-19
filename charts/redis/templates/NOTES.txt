@@ -1,0 +1,2 @@
+Redis {{ .Chart.AppVersion }} is available at {{ include "redis.serviceName" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}.
+{{- if .Values.auth.enabled }} The password is stored in Secret {{ include "redis.secretName" . }}.{{ end }}

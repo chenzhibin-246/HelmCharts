@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "image": { "type": "object", "properties": { "repository": { "type": "string", "minLength": 1 }, "tag": { "type": "string", "pattern": "^7\\.2([.]\\d+)?$" }, "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] } } },
+    "auth": { "type": "object", "properties": { "enabled": { "type": "boolean" }, "password": { "type": "string" }, "existingSecret": { "type": "string" } } },
+    "primary": { "type": "object", "properties": { "replicaCount": { "const": 1 }, "persistence": { "type": "object", "properties": { "enabled": { "type": "boolean" }, "size": { "type": "string" } } } } }
+  }
+}

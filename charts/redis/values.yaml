@@ -1,0 +1,73 @@
+nameOverride: ""
+fullnameOverride: ""
+image:
+  registry: docker.io
+  repository: library/redis
+  tag: "7.2.17"
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+auth:
+  enabled: true
+  password: ""
+  existingSecret: ""
+  existingSecretKey: redis-password
+redis:
+  configuration: |
+    appendonly yes
+    save 900 1
+    save 300 10
+    save 60 10000
+    protected-mode yes
+    dir /data
+service:
+  type: ClusterIP
+  port: 6379
+  annotations: {}
+  sessionAffinity: None
+primary:
+  replicaCount: 1
+  podManagementPolicy: OrderedReady
+  podSecurityContext:
+    enabled: true
+    fsGroup: 999
+    fsGroupChangePolicy: OnRootMismatch
+  containerSecurityContext:
+    enabled: true
+    runAsUser: 999
+    runAsGroup: 999
+    runAsNonRoot: true
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: 250m, memory: 256Mi}
+  readinessProbe:
+    enabled: true
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 6
+  livenessProbe:
+    enabled: true
+    initialDelaySeconds: 20
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 6
+  persistence:
+    enabled: true
+    storageClass: ""
+    accessModes: [ReadWriteOnce]
+    size: 8Gi
+    annotations: {}
+  extraEnv: []
+  extraEnvFrom: []
+  extraVolumes: []
+  extraVolumeMounts: []
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+networkPolicy:
+  enabled: false
+  allowExternal: true
+commonLabels: {}
+commonAnnotations: {}

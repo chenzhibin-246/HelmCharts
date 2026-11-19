@@ -1,0 +1,2 @@
+PostgreSQL {{ .Chart.AppVersion }} is available at {{ include "postgresql.serviceName" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}.
+The credentials are stored in Secret {{ include "postgresql.secretName" . }}.

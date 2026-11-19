@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "redis.serviceName" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "redis.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  sessionAffinity: {{ .Values.service.sessionAffinity }}
+  ports:
+    - name: redis
+      port: {{ .Values.service.port }}
+      protocol: TCP
+      targetPort: redis
+  selector:
+    {{- include "redis.selectorLabels" . | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "redis.headlessServiceName" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "redis.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+    - name: redis
+      port: {{ .Values.service.port }}
+      protocol: TCP
+      targetPort: redis
+  selector:
+    {{- include "redis.selectorLabels" . | nindent 4 }}
