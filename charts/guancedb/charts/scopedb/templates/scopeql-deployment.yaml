@@ -1,3 +1,4 @@
+{{/* 可选的 ScopeQL 查询服务。 */}}
 {{- if .Values.scopeql.enabled }}
 apiVersion: apps/v1
 kind: Deployment

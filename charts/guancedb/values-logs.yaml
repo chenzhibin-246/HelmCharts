@@ -1,51 +1,72 @@
-# GuanceDB logs business profile with ScopeDB.
-# Install this profile first when the metrics profile reuses its guance-meta.
-# Replace placeholder endpoints and create guance-meta-secret before installation.
+# GuanceDB 日志业务 profile，包含 GuanceDB Insert、Select 和 ScopeDB。
+#
+# 这份文件只覆盖日志业务需要调整的值，未列出的字段继续使用 values.yaml 默认值。
+# 指标业务会复用本 profile 创建的 guance-meta，因此建议先安装日志业务。
+# 部署前请替换 MySQL、Kodo、OTLP、S3 和 StorageClass 等环境相关占位值。
 
+# 日志查询不使用本 Chart 内的 GuanceDB Storage，storageNode 指向现有指标存储节点。
 guance_storage:
   enabled: false
 
+# 启用 GuanceDB 自研流式聚合。启用后 Insert 需要 /data/stream-aggr 持久化路径。
 streamAggr:
   enabled: true
 
+# ScopeDB 和 Insert PVC 使用的默认 StorageClass。
 global:
   storageClass: ebs-sc
 
+# 日志 Insert、Select 的默认调度位置。
 nodeSelector:
   nodepool: guancedb4scopedb
 
+# 允许 Pod 调度到带有 nodepool=guancedb4scopedb 污点的节点。
 tolerations:
   - effect: NoSchedule
     key: nodepool
     operator: Equal
     value: guancedb4scopedb
 
+# 为老版本 ScopeDB 构建时间索引。使用较新 ScopeDB 版本时仍可保留，便于兼容旧查询。
 timeIndex:
   enabled: true
   path: /data/time-index
 
+# 私有镜像仓库认证 Secret 列表。公共仓库场景保持为空。
 imagePullSecrets: []
 
+# guance-meta 是日志和指标业务共享的元数据入口。
+# enabled=true 时需要提前创建 guance-meta-secret，并提供 metadataMySQLUsername 和 metadataMySQLPassword。
 guance_meta:
   enabled: true
+  # 该 cluster 名称用于隔离元数据参数和流式聚合注册信息。
   cluster: logs
   mysql:
+    # 外部 MySQL 地址，格式为 host:port。
     addr: "<MYSQL_HOST>:3306"
+    # 元数据使用的数据库名称。
     database: guance_meta
   kodo:
+    # Kodo 用于保存 GuanceDB 元数据相关对象。
     endpoint: "http://kodo-inner.forethought-kodo:9527"
   secret:
+    # 该 Secret 不由 Chart 创建。
     name: guance-meta-secret
 
+# 日志写入组件。StatefulSet 会为每个副本创建独立 PVC。
 guance_insert:
+  # 日志写入副本数量。
   replicaCount: 3
   persistentVolume:
+    # 主数据盘同时承载 stream-aggr 数据。
     size: 200Gi
     fileQueue:
+      # false 表示不创建单独的 fileQueue PVC。
       enabled: false
-      # The queue shares /data with stream-aggr in this profile.
+      # 接受 fileQueue 与 stream-aggr 共享 /data 可能带来的 I/O 性能影响。
       acknowledgeSharedVolumePerformanceDowngrade: true
   resources:
+    # limits 影响 Kubernetes 调度和 ScopeDB 并发参数计算。
     limits:
       cpu: "8"
       memory: 16Gi
@@ -53,11 +74,14 @@ guance_insert:
       cpu: 100m
       memory: 128Mi
   extraArgs:
+    # 写入队列允许使用的最大总空间，单位为字节，这里是 10GiB。
     fileQueue.maxTotalSize: "10737418240"
 
+# 日志查询组件。ScopeDB 开启时 tenancy 必须设置为 shared 或 dedicated。
 guance_select:
   tenancy: dedicated
   queryQueue:
+    # ScopeDB 自带查询队列时关闭 GuanceDB Select 的旧队列，避免重复排队。
     enabled: false
   replicaCount: 3
   resources:
@@ -65,6 +89,7 @@ guance_select:
       cpu: 100m
       memory: 128Mi
   env:
+    # 将 Pod 名称写入 OTEL_RESOURCE_ATTRIBUTES，便于按实例关联遥测数据。
     - name: POD_NAME
       valueFrom:
         fieldRef:
@@ -73,6 +98,7 @@ guance_select:
     - name: OTEL_RESOURCE_ATTRIBUTES
       value: pod_name=$(POD_NAME)
   extraArgs:
+    # 通用日志、时区和查询超时参数。
     envflag.enable: true
     http.disableResponseCompression: true
     loggerFormat: json
@@ -80,20 +106,28 @@ guance_select:
     loggerTimezone: Asia/Shanghai
     search.denyPartialResponse: true
     search.maxQueryDuration: 110s
+    # 现有指标 Storage 节点的 select 端口列表。
     storageNode: 172.31.59.19:8401,172.31.51.113:8401
+    # ScopeDB 查询任务使用的节点组。
     scopeDB.nodegroup.archiveQuery: large-query
     scopeDB.nodegroup.query: large-query
     scopeDB.nodegroup.largeQuery: ""
 
+# ScopeDB 子 Chart 配置。日志业务使用 dedicated tenancy。
 scopedb:
   enabled: true
   metaUpgrade:
+    # 关闭自动元数据升级，由发布流程显式控制升级顺序。
     disable: true
+  # ScopeDB 镜像仓库认证 Secret 列表。
   imagePullSecrets: []
   env:
+    # ScopeDB Pod 的 OpenTelemetry 资源属性。
     - name: OTEL_RESOURCE_ATTRIBUTES
       value: pod_name=$(POD_NAME)
+  # ScopeDB 上报 OTLP 地址。请替换为目标环境的 DataKit 地址。
   otlpHost: "xxx"
+  # ScopeDB 组件的默认调度位置。
   nodeSelector:
     nodepool: scopedb
   tolerations:
@@ -102,6 +136,7 @@ scopedb:
       operator: Equal
       value: scopedb
   nodegroups:
+    # query-meta 保存查询元数据并参与查询并发计算。
     - name: query-meta
       replicaCount: 1
       resources:
@@ -111,6 +146,7 @@ scopedb:
         requests:
           cpu: 100m
           memory: 128Mi
+    # ingest-meta 保存写入元数据并参与写入并发计算。
     - name: ingest-meta
       replicaCount: 1
       resources:
@@ -120,6 +156,7 @@ scopedb:
         requests:
           cpu: 100m
           memory: 128Mi
+    # ingest 接收并处理 ScopeDB 写入请求。
     - name: ingest
       replicaCount: 2
       resources:
@@ -136,6 +173,7 @@ scopedb:
           key: nodepool
           operator: Equal
           value: scopedb-ingest
+    # system-query 执行系统查询和后台查询任务。
     - name: system-query
       replicaCount: 1
       resources:
@@ -152,6 +190,7 @@ scopedb:
           key: nodepool
           operator: Equal
           value: scopedb-system-query
+    # large-query 执行资源消耗较大的查询。
     - name: large-query
       replicaCount: 1
       resources:
@@ -168,6 +207,7 @@ scopedb:
           key: nodepool
           operator: Equal
           value: scopedb-large-query
+    # job 承载 ScopeDB 后台作业。
     - name: job
       replicaCount: 1
       resources:
@@ -184,6 +224,7 @@ scopedb:
           key: nodepool
           operator: Equal
           value: scopedb-job
+    # rollover-job 执行数据滚动任务，并使用额外磁盘做 spill。
     - name: rollover-job
       replicaCount: 1
       resources:
@@ -194,8 +235,11 @@ scopedb:
           cpu: 100m
           memory: 128Mi
       diskSpill:
+        # 开启查询中间结果的额外磁盘空间。
         enabled: true
+        # 额外工作盘预算，单位为 GiB。
         diskBudgetGi: 500
+        # 该 StorageClass 的 PV 删除时同步删除底层 EVS。
         storageClass: csi-disk-ssd-delete
       nodeSelector:
         nodepool: scopedb-rollover-job
@@ -204,8 +248,10 @@ scopedb:
           key: nodepool
           operator: Equal
           value: scopedb-rollover-job
+  # ScopeDB 对象数据使用的 S3 兼容对象存储。
   s3:
     bucket: scopedb-prod
     endpoint: http://xxx.amazonaws.com
     region: xxx
     virtualHostStyle: true
+      # ingest 使用独立节点池，避免与查询任务争抢资源。

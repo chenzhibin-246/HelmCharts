@@ -1,3 +1,4 @@
+{{/* 为需要 Kubernetes API 访问的 GuanceDB 组件创建 RBAC Role。 */}}
 {{- if .Values.guance_throttler.enabled }}
 kind: Role
 apiVersion: rbac.authorization.k8s.io/v1

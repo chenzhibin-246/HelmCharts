@@ -1,3 +1,4 @@
+{{/* 可选 Ingress，将外部请求转发到 guance-select 和 guance-insert。 */}}
 {{- if .Values.ingress.enabled }}
 {{- $ingressApiIsStable := eq (include "guancedb.ingress.isStable" .) "true" -}}
 {{- $ingressSupportsIngressClassName := eq (include "guancedb.ingress.supportsIngressClassName" .) "true" -}}

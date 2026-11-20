@@ -1,6 +1,8 @@
+{{/* guance-meta 连接外部 MySQL 和 Kodo，保存 cluster 级元数据及动态参数。 */}}
 {{- $metaClientURL := include "guancedb.guance_meta.clientURL" . -}}
 {{- if .Values.guance_meta.enabled -}}
 {{- $metadataSecretName := include "guancedb.guance_meta.secretName" . -}}
+{{/* 结构化 mysql、kodo、secret 和 cluster 参数由 Chart 生成，避免 extraArgs 覆盖安全配置。 */}}
 {{- $reservedArgs := list "mysql.addr" "mysql.database" "mysql.username" "mysql.password" "kodo.endpoint" "ui.enabled" "meta.cluster" -}}
 apiVersion: apps/v1
 kind: Deployment
@@ -53,6 +55,7 @@ spec:
           securityContext:
             {{- toYaml .Values.guance_meta.podSecurityContext | nindent 12 }}
           args:
+            {{/* 先追加用户允许自定义的参数，再追加 Chart 管理的元数据连接参数。 */}}
           {{- range $key, $value := .Values.guance_meta.extraArgs }}
             {{- if has $key $reservedArgs }}
               {{- if eq $key "meta.cluster" }}

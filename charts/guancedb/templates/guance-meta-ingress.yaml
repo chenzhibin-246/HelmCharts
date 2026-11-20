@@ -1,3 +1,4 @@
+{{/* 可选的 guance-meta 管理 UI Ingress，默认关闭以避免直接暴露管理接口。 */}}
 {{- if and .Values.guance_meta.enabled .Values.guance_meta.ingress.enabled -}}
 {{- $ingressApiIsStable := eq (include "guancedb.ingress.isStable" .) "true" -}}
 {{- $ingressSupportsIngressClassName := eq (include "guancedb.ingress.supportsIngressClassName" .) "true" -}}

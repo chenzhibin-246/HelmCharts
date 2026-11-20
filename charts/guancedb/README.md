@@ -169,6 +169,38 @@ helm upgrade --install guancedb-metrics ./charts/guancedb \
 
 两份 profile 都保留了原始镜像仓库配置。部署前需要把占位的 MySQL、Kodo、OTLP、ScopeDB S3 和 StorageClass 参数替换成目标环境的实际值。
 
+### 配置项速查
+
+| 配置项 | 作用 | 常见修改场景 |
+| --- | --- | --- |
+| `global.storageClass` | 为没有单独指定 StorageClass 的 PVC 提供默认值 | 切换云盘、NFS 或本地盘 |
+| `nodeSelector`、`tolerations` | 控制 Insert、Select、Storage 的默认调度位置 | 绑定专用节点池或容忍节点污点 |
+| `image.tag` 和组件 `image.tag` | 选择 GuanceDB 镜像版本 | 使用镜像仓库、灰度版本或离线镜像 |
+| `guance_meta.enabled` | 是否在当前 release 创建 guance-meta | 主业务 cluster 开启，从业务 cluster 关闭 |
+| `guance_meta.cluster` | 隔离元数据参数、租户配置和流式聚合注册 | 同一个 guance-meta 服务多个业务 cluster |
+| `guance_meta.externalURL` | 指向已经存在的 guance-meta Service | 从业务 cluster 复用主业务 meta |
+| `streamAggr.enabled` | 开启 Insert 的自研流式聚合 | 日志聚合、指标注册和多 cluster 注册 |
+| `timeIndex.enabled`、`timeIndex.path` | 控制时间索引是否写入 Insert 数据盘 | 兼容较旧 ScopeDB 查询或需要时间索引时 |
+| `guance_insert.persistentVolume` | 配置 Insert 主数据盘和 fileQueue 盘 | 调整写入容量、吞吐和 PVC 绑定 |
+| `guance_select.extraArgs.storageNode` | 指向现有 Storage 的 select 端口 | 关闭本 Chart Storage 或连接外部 Storage |
+| `guance_storage.enabled` | 是否部署指标 Storage StatefulSet | 指标业务自建 Storage 时开启 |
+| `scopedb.enabled` | 是否部署 ScopeDB 子 Chart | 日志业务使用 ScopeDB 时开启 |
+| `scopedb.nodegroups` | 定义 ScopeDB 的查询、写入和后台作业节点 | 按节点池、资源和磁盘类型拆分负载 |
+| `scopedb.s3` | 配置 ScopeDB 对象存储 | 使用 RustFS、S3、OSS 或其他 S3 兼容服务 |
+| `imagePullSecrets` | 配置私有镜像仓库认证 | 中国区镜像仓库、离线仓库或私有 Registry |
+
+### 模板阅读顺序
+
+建议先阅读 `values-logs.yaml` 或 `values-metrics.yaml`，再按以下顺序查看模板。
+
+1. `guance-meta-deployment.yaml` 说明元数据入口和 Secret 引用。
+2. `guance-insert-statefulset.yaml` 说明写入参数、数据盘、流式聚合和 fileQueue。
+3. `guance-select-deployment.yaml` 说明查询路由、Storage FQDN、ScopeDB 和 queryQueue。
+4. `guance-storage-statefulset.yaml` 说明指标数据持久化和 Storage 节点发现。
+5. `charts/scopedb/templates/workload.yaml` 说明每个 ScopeDB nodegroup 如何生成 workload。
+
+模板文件顶部和关键条件分支已经增加说明性 Helm 注释。渲染结果不会包含这些注释。
+
 ### 5. 多集群共享 guance-meta
 
 同一个 guance-meta 可以服务多个 GuanceDB 集群。主集群按上文启用 `guance_meta.enabled=true`；第二个及后续集群设置

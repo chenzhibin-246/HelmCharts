@@ -1,3 +1,4 @@
+{{/* 根据指标扩缩 guance-select Deployment。 */}}
 {{- if .Values.guance_select.horizontalPodAutoscaler.enabled }}
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler

@@ -1,3 +1,7 @@
+{{/*
+guance-select 使用 Deployment 提供无状态查询副本。
+模板根据 Storage、Insert、Doris、ScopeDB、Redis 和 guance-meta 配置拼装启动参数。
+*/}}
 {{- if .Values.guance_select.enabled -}}
 {{- $selectArgs := .Values.guance_select.extraArgs | default dict -}}
 {{- $guanceSelectTenancy := "" -}}
@@ -81,6 +85,7 @@ spec:
           securityContext:
             {{- toYaml .Values.guance_select.podSecurityContext | nindent 12 }}
           args:
+            {{/* Select 先发现 Storage 和 Insert，再追加 Doris、ScopeDB、Redis 与 meta 参数。 */}}
             - --otel.endpoint=http://%{HOST_IP}:9529/otel
             - {{ printf "%s=%s" "--cacheDataPath" .Values.guance_select.cache.mountPath | quote}}
           {{- if and .Values.guance_storage.enabled (not .Values.guance_select.suppressStorageFQDNsRender) }}
@@ -101,6 +106,7 @@ spec:
               {{- printf "- --dorisFENode=%s\n" $ip | nindent 12 }}
             {{- end -}}
           {{- end }}
+          {{/* ScopeDB 模式要求 dedicated/shared tenancy，并把查询路由到 ScopeDB 节点组。 */}}
           {{- if .Values.scopedb.enabled }}
             {{ if .Values.doris.enabled -}}
               {{ fail "doris.enabled and scopedb.enabled cannot both be true" }}
@@ -118,6 +124,7 @@ spec:
           {{- end }}
           {{- $setConcurrentGetIndexRequests := false }}
           {{- $queryCPULimit := 0 }}
+          {{/* extraArgs 原样映射为 Select 启动参数，ScopeDB 受保护参数由 Chart 生成。 */}}
           {{- range $key, $value := $selectArgs }}
             {{- $valueToRender := $value }}
             {{- if or (kindIs "float64" $value) (kindIs "float32" $value) }}
@@ -130,6 +137,7 @@ spec:
               {{- fail (printf "%s should not be set manually" $key) }}
             {{- end }}
           {{- end }}
+          {{/* 共享 guance-meta 时注入 externalURL，避免每个业务 cluster 各自创建 meta。 */}}
           {{- if and $metaClientURL (not (hasKey $selectArgs "meta.addr")) }}
             - {{ printf "%s=%s" "--meta.addr" $metaClientURL | quote }}
           {{- end }}

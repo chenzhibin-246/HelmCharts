@@ -1,3 +1,4 @@
+{{/* guance-meta 的内部 ClusterIP Service，供同一 namespace 的组件访问。 */}}
 {{- if .Values.guance_meta.enabled -}}
 apiVersion: v1
 kind: Service

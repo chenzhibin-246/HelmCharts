@@ -1,3 +1,4 @@
+{{/* 保护 guance-storage 副本在节点维护或驱逐期间的最小可用数量。 */}}
 {{- if and .Values.guance_storage.enabled .Values.guance_storage.podDisruptionBudget.enabled }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget

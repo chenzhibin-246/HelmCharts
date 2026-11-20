@@ -1,3 +1,4 @@
+{{/* 按 nodegroups 生成 ScopeDB 的 workload。 */}}
 {{ range .Values.nodegroups }}
 {{- range $diskType, $disk := pick . "diskCache" "diskSpill" }}
 {{- if and $disk (hasKey $disk "sizeGi") }}

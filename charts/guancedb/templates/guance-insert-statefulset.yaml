@@ -1,3 +1,7 @@
+{{/*
+guance-insert 使用 StatefulSet，因为每个副本需要稳定网络身份和独立 PVC。
+模板还负责注入 Storage、stream-aggr、time-index、ScopeDB 和 guance-meta 参数。
+*/}}
 {{- $enableLogDatasource := and .Values.guance_insert.enabled (or .Values.doris.enabled .Values.scopedb.enabled) -}}
 {{- $enableFileQueueVolume := and $enableLogDatasource .Values.guance_insert.persistentVolume.fileQueue.enabled -}}
 {{- $fileQueueVolumeName := .Values.guance_insert.persistentVolume.fileQueue.name | default "guance-insert-file-queue" -}}
@@ -72,6 +76,7 @@ spec:
           securityContext:
             {{- toYaml .Values.guance_insert.podSecurityContext | nindent 12 }}
           args:
+            {{/* 先连接 Storage，再按业务开关追加 stream-aggr、time-index 和 ScopeDB 参数。 */}}
             - --otel.endpoint=http://%{HOST_IP}:9529/otel
           {{- if and .Values.guance_storage.enabled (not .Values.guance_insert.suppressStorageFQDNsRender) }}
           {{ include "guancedb.guance_insert.guance_storage-pod-fqdn" . | nindent 12 }}
@@ -95,6 +100,7 @@ spec:
               {{ printf "- --dorisFENode=%s\n" $ip | nindent 12 }}
             {{ end -}}
           {{- end }}
+          {{/* ScopeDB 模式下，Chart 根据 ingest 和 ingest-meta 资源自动计算并发参数。 */}}
           {{- if .Values.scopedb.enabled }}
             - --scopeDB.node={{ .Values.scopedb.fullnameOverride }}
             {{- if (eq 1 (len .Values.scopedb.nodegroups)) }}
@@ -106,6 +112,7 @@ spec:
           {{- $providedFileQueueMaxFileSize := false }}
           {{- $setFileQueueWorkers := false }}
           {{- $setConcurrentGetIndexRequests := false }}
+          {{/* 用户提供的 extraArgs 会追加到容器命令行，Chart 管理的参数不能重复覆盖。 */}}
           {{- range $key, $value := $insertArgs }}
             {{- $valueToRender := $value }}
             {{- if or (kindIs "float64" $value) (kindIs "float32" $value) }}
@@ -120,6 +127,7 @@ spec:
               {{- $providedFileQueueMaxFileSize = true }}
             {{- end }}
           {{- end }}
+          {{/* enabled=true 使用本 release 的 guance-meta，enabled=false 使用 externalURL。 */}}
           {{- if and $metaClientURL (not (hasKey $insertArgs "meta.addr")) }}
             - {{ printf "%s=%s" "--meta.addr" $metaClientURL | quote }}
           {{- end }}
@@ -248,6 +256,7 @@ spec:
   {{- $mainNeedsTemplate := and .Values.guance_insert.persistentVolume.enabled (not .Values.guance_insert.persistentVolume.existingClaim) }}
   {{- $fqNeedsTemplate := $enableFileQueueVolume }}
   {{- if or $mainNeedsTemplate $fqNeedsTemplate }}
+  {{/* StatefulSet 为每个副本生成独立主盘和可选 fileQueue 盘，避免多副本共享 PVC。 */}}
   volumeClaimTemplates:
     {{- if $mainNeedsTemplate }}
     - metadata:

@@ -1,3 +1,4 @@
+{{/* 保护 guance-select 在节点维护或驱逐期间的最小可用副本数。 */}}
 {{- if .Values.guance_select.podDisruptionBudget.enabled }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget

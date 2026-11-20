@@ -1,3 +1,7 @@
+{{/*
+guance-storage 使用 StatefulSet 持久化指标数据。
+每个副本拥有独立 PVC，Select 通过无头 Service 发现 8401 端口。
+*/}}
 {{- if .Values.guance_storage.enabled -}}
 {{- $storageArgs := .Values.guance_storage.extraArgs | default dict -}}
 {{- $metaClientURL := include "guancedb.guance_meta.clientURL" . -}}
@@ -62,12 +66,15 @@ spec:
           securityContext:
             {{- toYaml .Values.guance_storage.podSecurityContext | nindent 12 }}
           args:
+            {{/* retentionPeriod 和 storageDataPath 是 Storage 的必需基础参数。 */}}
             - --otel.endpoint=http://%{HOST_IP}:9529/otel
             - {{ printf "%s=%s" "--retentionPeriod" (toString .Values.guance_storage.retentionPeriod) | quote}}
             - {{ printf "%s=%s" "--storageDataPath" .Values.guance_storage.persistentVolume.mountPath | quote}}
+          {{/* extraArgs 用于覆盖保留策略、日志格式和其他 Storage 启动参数。 */}}
           {{- range $key, $value := $storageArgs }}
             - --{{ $key }}={{ $value }}
           {{- end }}
+          {{/* Storage 必须与同一业务 cluster 的 Insert、Select 使用同一个 meta 地址。 */}}
           {{- if and $metaClientURL (not (hasKey $storageArgs "meta.addr")) }}
             - {{ printf "%s=%s" "--meta.addr" $metaClientURL | quote }}
           {{- end }}
@@ -160,6 +167,7 @@ spec:
         {{- end }}
         {{- end }}
   {{- if and .Values.guance_storage.persistentVolume.enabled (not .Values.guance_storage.persistentVolume.existingClaim) }}
+  {{/* 每个 Storage Pod 使用独立 PVC 保存指标数据。 */}}
   volumeClaimTemplates:
     - metadata:
         name: guance-storage-volume

@@ -1,3 +1,4 @@
+{{/* ScopeDB 子 Chart 的名称、标签和容器参数辅助函数。 */}}
 {{/*
 Expand the name of the chart.
 */}}

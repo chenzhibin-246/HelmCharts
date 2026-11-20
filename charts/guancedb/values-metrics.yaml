@@ -1,26 +1,37 @@
-# GuanceDB metrics business profile.
-# This profile reuses the logs profile's guance-meta service and owns its
-# metrics storage StatefulSet. Install it after the logs profile.
+# GuanceDB 指标业务 profile，包含 GuanceDB Insert、Select 和 Storage。
+#
+# 该 profile 复用日志业务创建的 guance-meta，但拥有自己的指标 Storage StatefulSet。
+# 请先安装 values-logs.yaml，再安装本 profile。
 
+# 指标 Storage、Insert PVC 使用的默认 StorageClass。
 global:
   storageClass: ebs-sc
 
+# 指标业务默认调度到 Linux 节点。
 nodeSelector:
   kubernetes.io/os: linux
 
+# 私有镜像仓库认证 Secret 列表。公共仓库场景保持为空。
 imagePullSecrets: []
 
+# 指标 Insert 需要流式聚合路径来处理注册和聚合数据。
 streamAggr:
   enabled: true
 
+# 指标业务复用日志业务的 guance-meta，不再创建第二个 guance-meta Deployment。
 guance_meta:
   enabled: false
+  # 日志业务 release 使用 guancedb 时，guance-meta Service 的默认 FQDN。
   externalURL: "http://guance-meta.guancedb.svc.cluster.local:8483"
+  # 必须与日志业务的 cluster 不同，用于隔离指标和日志元数据参数。
   cluster: metrics
 
+# 指标查询组件。
 guance_select:
+  # 指标查询副本数量。
   replicaCount: 2
   queryQueue:
+    # 指标业务不启用旧版 Redis 查询队列。
     enabled: false
   resources:
     requests:
@@ -30,6 +41,7 @@ guance_select:
       cpu: "1"
       memory: 1Gi
   extraArgs:
+    # 指标查询日志、时区和查询超时参数。
     envflag.enable: true
     loggerFormat: json
     loggerMaxArgLen: 20000
@@ -38,9 +50,12 @@ guance_select:
     search.denyPartialResponse: true
     search.maxQueryDuration: 110s
 
+# 指标写入组件。每个副本使用独立的持久化卷。
 guance_insert:
+  # 指标写入副本数量。
   replicaCount: 2
   persistentVolume:
+    # 启用 StatefulSet volumeClaimTemplates。
     enabled: true
     size: 8Gi
   resources:
@@ -51,16 +66,21 @@ guance_insert:
       cpu: "2"
       memory: 2Gi
   extraArgs:
+    # 指标写入日志和时区参数。
     envflag.enable: true
     loggerFormat: json
     loggerMaxArgLen: 10000
     loggerTimezone: Asia/Shanghai
 
+# 指标 Storage 组件。Select 会自动根据该副本数生成 Storage FQDN。
 guance_storage:
   enabled: true
+  # Storage StatefulSet 副本数。
   replicaCount: 2
+  # 指标数据保留时间。
   retentionPeriod: 2y
   persistentVolume:
+    # 每个 Storage 副本的本地数据卷。
     enabled: true
     size: 20Gi
   resources:
@@ -71,20 +91,25 @@ guance_storage:
       cpu: "2"
       memory: 4Gi
   extraArgs:
+    # retentionFilters.config 为空表示不额外覆盖保留策略接口。
     envflag.enable: true
     loggerFormat: json
     loggerMaxArgLen: 10000
     loggerTimezone: Asia/Shanghai
     retentionFilters.config: ""
 
+# 指标业务不启用 ScopeDB。
 scopedb:
   enabled: false
 
+# 指标业务不使用 Doris。
 doris:
   enabled: false
 
+# 不部署 GuanceDB Throttler。
 guance_throttler:
   enabled: false
 
+# 不创建 Ingress，服务通过 ClusterIP 暴露。
 ingress:
   enabled: false

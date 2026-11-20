@@ -1,3 +1,4 @@
+{{/* 为启用 autoscaling 的 ScopeDB 节点组创建独立 HPA。 */}}
 {{ range .Values.nodegroups }}
 {{- if and .autoscaling .autoscaling.enabled }}
 apiVersion: autoscaling/v2

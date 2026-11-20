@@ -1,6 +1,7 @@
+# ScopeDB 子 Chart 的全局配置。父 Chart 可以通过 scopedb.global 覆盖这些值。
 global: { }
 
-
+# ScopeDB 使用的 S3 兼容对象存储。endpoint、bucket 和凭据需要匹配实际环境。
 s3:
   endpoint: http://minio-server:9000
   virtualHostStyle: false
@@ -8,11 +9,14 @@ s3:
   bucket: scopedb
 
 scopeql:
+  # 是否部署 ScopeQL 查询服务。
   enabled: false
   image:
     repository: pubrepo.guance.com/scopedb/scopeql
     tag: v0.6.0
 
+# ScopeDB 工作节点组。每个节点组会生成独立的 workload 和 Service。
+# name 决定查询、写入、后台作业等职责，resources 影响并发和调度。
 nodegroups:
   - { name: query0,        resources: { limits: { cpu: "4", memory: "8Gi" }, requests: { cpu: "1", memory: "2Gi" } } }
   - { name: query1,        resources: { limits: { cpu: "4", memory: "8Gi" }, requests: { cpu: "1", memory: "2Gi" } }, otlpHost: 172.16.242.2 }
@@ -23,15 +27,18 @@ nodegroups:
   - { name: rollover-job,  resources: { limits: { cpu: "4", memory: "8Gi" }, requests: { cpu: "1", memory: "2Gi" } } }
   - { name: ingest,        resources: { limits: { cpu: "4", memory: "8Gi" }, requests: { cpu: "1", memory: "2Gi" } }, autoscaling: { enabled: true, minReplicas: 1, maxReplicas: 2, targetCPUUtilizationPercentage: 60 } }
 
+# ScopeDB 元数据升级 Job 的行为。
 metaUpgrade:
   disable: false
   offline: false
+# 是否允许 ScopeDB 容器生成 core dump。
 enableCoreDump: false
 
+# ScopeDB workload 的更新策略。
 strategy:
   type: RollingUpdate
 
-# This sets the container image more information can be found here: https://kubernetes.io/docs/concepts/containers/images/
+# ScopeDB 主容器镜像。
 image:
   repository: pubrepo.guance.com/scopedb/scopedb
   # This sets the pull policy for images.
@@ -39,7 +46,7 @@ image:
   # Overrides the image tag whose default is the chart appVersion.
   tag: ""
 
-# This is for the secretes for pulling an image from a private repository more information can be found here: https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
+# 私有镜像仓库认证 Secret。
 imagePullSecrets: [ ]
 # This is to override the chart name.
 nameOverride: ""

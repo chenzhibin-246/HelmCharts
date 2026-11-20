@@ -1,3 +1,4 @@
+{{/* guance-insert 的无头 Service，用于 StatefulSet 网络身份和写入流量。 */}}
 {{- if .Values.guance_insert.enabled -}}
 apiVersion: v1
 kind: Service

@@ -1,3 +1,4 @@
+{{- /* 将 ScopeDB 的启动配置和节点组参数写入 ConfigMap。 */ -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:

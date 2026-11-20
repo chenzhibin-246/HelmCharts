@@ -1,3 +1,4 @@
+{{/* 可选的 ScopeDB 外部访问入口，默认关闭。 */}}
 {{- if .Values.ingress.enabled -}}
 apiVersion: networking.k8s.io/v1
 kind: Ingress

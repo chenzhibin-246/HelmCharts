@@ -1,3 +1,4 @@
+{{/* guance-storage 的无头 Service，发布 8400、8401 和 8482 端口。 */}}
 {{- if .Values.guance_storage.enabled -}}
 apiVersion: v1
 kind: Service

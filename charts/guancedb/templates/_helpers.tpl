@@ -1,3 +1,7 @@
+{{/*
+GuanceDB 模板辅助函数集中处理名称、标签、元数据地址、Storage FQDN、CPU 和参数校验。
+这些函数不直接渲染 Kubernetes 对象，而是被各组件模板复用。
+*/}}
 {{/* vim: set filetype=mustache: */}}
 
 {{- if and .Values.guance_select.enabled .Values.guance_insert.enabled -}}

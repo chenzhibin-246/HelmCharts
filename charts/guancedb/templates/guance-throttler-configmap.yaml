@@ -1,3 +1,4 @@
+{{/* 保存 guance-throttler 的运行时抓取配置。该组件默认关闭。 */}}
 {{- if and .Values.guance_throttler.enabled .Values.guance_throttler.scrape.enabled }}
 apiVersion: v1
 kind: ConfigMap

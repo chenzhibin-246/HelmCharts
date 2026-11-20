@@ -1,3 +1,4 @@
+{{/* guance-throttler 的内部 Service。 */}}
 {{- if and .Values.guance_throttler.enabled -}}
 apiVersion: v1
 kind: Service

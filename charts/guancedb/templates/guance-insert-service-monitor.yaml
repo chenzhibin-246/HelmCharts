@@ -1,3 +1,4 @@
+{{/* 为 Prometheus Operator 创建 guance-insert 的 ServiceMonitor。 */}}
 {{- if and .Values.guance_insert.enabled .Values.guance_insert.serviceMonitor.enabled -}}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor

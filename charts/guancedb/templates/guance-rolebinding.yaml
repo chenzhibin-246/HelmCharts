@@ -1,3 +1,4 @@
+{{/* 将 GuanceDB ServiceAccount 绑定到 guance-role。 */}}
 {{- if .Values.guance_throttler.enabled }}
 kind: RoleBinding
 apiVersion: rbac.authorization.k8s.io/v1

@@ -1,3 +1,4 @@
+{{/* 根据 CPU 或自定义指标扩缩 guance-insert，启用后由 HPA 接管副本数。 */}}
 {{- if .Values.guance_insert.horizontalPodAutoscaler.enabled }}
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler

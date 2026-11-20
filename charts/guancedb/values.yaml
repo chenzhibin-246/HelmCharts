@@ -1,10 +1,19 @@
-# Default values for guancedb.
-# This is a YAML-formatted file.
-# Declare variables to be passed into your templates.
+# GuanceDB Chart 默认配置。
+#
+# 组件关系如下。
+# - guance-insert 接收写入请求，并可执行 stream-aggr 和 time-index。
+# - guance-select 执行查询，并按配置连接 guance-storage、ScopeDB 或 Doris。
+# - guance-storage 持久化指标数据，通常与 guance-insert 和 guance-select 共用同一 cluster。
+# - guance-meta 保存元数据和动态参数，可由多个 GuanceDB release 共享。
+# - scopedb.enabled=true 时启用 vendored ScopeDB 子 Chart。
+#
+# 业务环境建议使用 values-logs.yaml 或 values-metrics.yaml 作为覆盖文件。
 
 global:
+  # 所有没有单独指定 storageClass 的 PVC 默认使用该 StorageClass。
   storageClass: ''
 
+# 全局默认调度规则。组件自身设置后会覆盖这里的值。
 nodeSelector: {}
 tolerations: []
 
@@ -13,9 +22,10 @@ clusterDomainSuffix: cluster.local
 printNotes: true
 
 image:
-  # this will be used if image tags of components (e.g., guance_insert.image.tag) are not set
+  # 未设置组件 image.tag 时使用该标签，空值时回退到 Chart.appVersion。
   tag: ''
 
+# 私有镜像仓库认证 Secret。组件没有单独 imagePullSecrets 时使用这里的配置。
 imagePullSecrets: [ ]
 
 serviceAccount:
@@ -501,9 +511,11 @@ guance_insert:
 guance_meta:
   # -- Enable deployment of guance-meta component. Disabled by default because it depends on external MySQL and Kodo.
   enabled: false
-  # -- Metadata cluster identifier shared by guance-meta and the insert/select/storage components. Leave empty to use "default"; set explicitly when deploying multiple GuanceDB clusters, and make it unique per cluster (parameter tables are isolated per cluster). Multi-cluster deployment semantics: docs/Deployment StreamAggr Pinned Registration.md.
+  # guance-meta、insert、select、storage 共享的元数据 cluster 标识。
+  # 留空时使用 default，多套 GuanceDB 业务共用 guance-meta 时必须为每套业务设置唯一值。
   cluster: ''
-  # -- External guance-meta URL used when this deployment reuses a guance-meta instance from another cluster. Set this with enabled=false; it is mutually exclusive with enabled=true.
+  # 复用其他 release 的 guance-meta 时填写 Service URL，并保持 enabled=false。
+  # enabled=true 与 externalURL 不能同时设置。
   externalURL: ''
   # -- guance-meta container name
   name: guance-meta
@@ -830,6 +842,7 @@ guance_storage:
     relabelings: []
 
 streamAggr:
+  # Insert 是否启用自研流式聚合。启用后需要持久化 /data/stream-aggr。
   enabled: true
 
 timeIndex:
@@ -840,6 +853,7 @@ timeIndex:
   path: /data/time-index
 
 doris:
+  # 使用 Doris 作为日志数据源时启用。不能和 scopedb 同时启用。
   enabled: false
   feIPs: []
   rootPassword: ''
@@ -848,6 +862,7 @@ doris:
   cacheSizeLimit: 4Gi
 
 scopedb:
+  # 启用 vendored ScopeDB 子 Chart。启用后 guance_select.tenancy 必须设置。
   enabled: false
   fullnameOverride: scopedb
 
