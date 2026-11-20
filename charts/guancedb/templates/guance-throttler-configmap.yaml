@@ -1,0 +1,30 @@
+{{- if and .Values.guance_throttler.enabled .Values.guance_throttler.scrape.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ template "guancedb.fullname" . }}-scrapeconfig
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "guancedb.guance_throttler.labels" . | nindent 4 }}
+data:
+  scrape.yml: |
+    global:
+      scrape_interval: 10s
+
+    scrape_configs:
+      - job_name: guance-throttler
+        static_configs:
+          - targets: [ "localhost:8428" ]
+
+      - job_name: guance-insert
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              own_namespace: true
+            selectors:
+              - role: pod
+                label: app.kubernetes.io/component={{ .Values.guance_insert.name }}
+              - role: pod
+                label: app.kubernetes.io/name={{ include "guancedb.name" . }}
+              - role: pod
+                label: app.kubernetes.io/instance={{ .Release.Name }}
+{{- end }}

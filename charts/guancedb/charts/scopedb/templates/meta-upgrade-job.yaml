@@ -1,0 +1,65 @@
+{{- $versionRequireOfflineMetaUpgrade := "^0.5.34" }}
+{{- $tag := (and .Values.image .Values.image.tag) | default $.Chart.AppVersion }}
+{{- $enableUpgrade := not (and .Values.metaUpgrade .Values.metaUpgrade.disable) }}
+{{- $enableOfflineUpgrade := and $enableUpgrade .Values.metaUpgrade .Values.metaUpgrade.offline }}
+{{- if and .Release.IsUpgrade
+           (not $enableOfflineUpgrade)
+           (semverCompare $versionRequireOfflineMetaUpgrade $tag)
+           (not (semverCompare $versionRequireOfflineMetaUpgrade
+                               (required `
+please either
+- enable offline meta upgrade by setting scopedb.metaUpgrade.disable to false and scopedb.metaUpgrade.offline to true
+- or enable meta version check via: helm upgrade --set scopedb.deployedVersion=$(kubectl -n guancedb get svc/scopedb -o jsonpath="{.metadata.labels.app\.kubernetes\.io/version}")`
+                                         .Values.deployedVersion))) }}
+  {{ fail (printf "ScopeDB %s requires offline meta upgrade" $versionRequireOfflineMetaUpgrade) }}
+{{- end }}
+{{- if $enableUpgrade }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "scopedb.fullname" $ }}-meta-upgrade
+  annotations:
+    helm.sh/hook: pre-upgrade
+spec:
+  ttlSecondsAfterFinished: 604800
+  template:
+    spec:
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ include "scopedb.fullname" $ }}-meta-upgrade
+          image: "{{ .Values.image.repository }}:{{ $tag }}"
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          command:
+            - bash
+            - -c
+          args:
+            {{- if not $enableOfflineUpgrade }}
+            - scopedb meta upgrade --to latest -y --service-url $SERVER_META_SERVICE_URL
+            {{- else }}
+            - |
+              if echo > /dev/tcp/{{ include "scopedb.fullname" $ }}/6543; then
+                echo "meta upgrade requires all ScopeDB instances to be stopped"
+                exit 1
+              fi
+              scopedb meta upgrade --to latest -y --service-url $SERVER_META_SERVICE_URL
+            {{- end }}
+          envFrom:
+            - secretRef:
+                name: {{ include "scopedb.fullname" $ }}
+      restartPolicy: Never
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $.Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{ end }}

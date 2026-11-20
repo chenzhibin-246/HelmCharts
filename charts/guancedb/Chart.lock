@@ -1,0 +1,6 @@
+dependencies:
+- name: scopedb
+  repository: file://charts/scopedb
+  version: 0.1.0
+digest: sha256:8239c522ac99f380bbcc23a9f9a02c44e6535fdcdc934823edfebd5b3e5a4f40
+generated: "2026-11-20T11:07:25.7375+08:00"

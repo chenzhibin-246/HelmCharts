@@ -1,0 +1,65 @@
+{{- if .Values.ingress.enabled }}
+{{- $ingressApiIsStable := eq (include "guancedb.ingress.isStable" .) "true" -}}
+{{- $ingressSupportsIngressClassName := eq (include "guancedb.ingress.supportsIngressClassName" .) "true" -}}
+{{- $ingressSupportsPathType := eq (include "guancedb.ingress.supportsPathType" .) "true" -}}
+{{- $ingressPathType := .Values.ingress.pathType -}}
+apiVersion: {{ include "guancedb.ingress.apiVersion" . }}
+kind: Ingress
+metadata:
+{{- if .Values.ingress.annotations }}
+  annotations:
+{{ toYaml .Values.ingress.annotations | indent 4 }}
+{{- end }}
+  labels:
+  {{ if .Values.ingress.extraLabels }}
+{{ toYaml .Values.ingress.extraLabels | indent 4 }}
+  {{ end }}
+  name: {{ template "guancedb.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  {{- if and $ingressSupportsIngressClassName .Values.ingress.ingressClassName }}
+  ingressClassName: {{ .Values.ingress.ingressClassName }}
+  {{- end }}
+  rules:
+  {{- $insertServiceName := include "guancedb.guance_insert.fullname" . }}
+  {{- $insertServicePort := .Values.guance_insert.service.servicePort -}}
+  {{- $selectServiceName := include "guancedb.guance_select.fullname" . }}
+  {{- $selectServicePort := .Values.guance_select.service.servicePort -}}
+  {{- range .Values.ingress.hosts }}
+  - host: {{ .name }}
+    http:
+      paths:
+        - path: /insert
+          {{- if $ingressSupportsPathType }}
+          pathType: {{ $ingressPathType }}
+          {{- end }}
+          backend:
+            {{- if $ingressApiIsStable }}
+            service:
+              name: {{ $insertServiceName }}
+              port:
+                number: {{ $insertServicePort }}
+            {{- else }}
+            serviceName: {{ $insertServiceName }}
+            servicePort: {{ .port | default "http"}}
+            {{- end }}
+        - path: /select
+          {{- if $ingressSupportsPathType }}
+          pathType: {{ $ingressPathType }}
+          {{- end }}
+          backend:
+            {{- if $ingressApiIsStable }}
+            service:
+              name: {{ $selectServiceName }}
+              port:
+                number: {{ $selectServicePort }}
+            {{- else }}
+            serviceName: {{ $selectServiceName }}
+            servicePort: {{ .port | default "http"}}
+            {{- end }}
+  {{- end -}}
+{{- if .Values.ingress.tls }}
+  tls:
+{{ toYaml .Values.ingress.tls | indent 4 }}
+{{- end -}}
+{{- end -}}

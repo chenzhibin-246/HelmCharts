@@ -1,0 +1,90 @@
+# GuanceDB metrics business profile.
+# This profile reuses the logs profile's guance-meta service and owns its
+# metrics storage StatefulSet. Install it after the logs profile.
+
+global:
+  storageClass: ebs-sc
+
+nodeSelector:
+  kubernetes.io/os: linux
+
+imagePullSecrets: []
+
+streamAggr:
+  enabled: true
+
+guance_meta:
+  enabled: false
+  externalURL: "http://guance-meta.guancedb.svc.cluster.local:8483"
+  cluster: metrics
+
+guance_select:
+  replicaCount: 2
+  queryQueue:
+    enabled: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  extraArgs:
+    envflag.enable: true
+    loggerFormat: json
+    loggerMaxArgLen: 20000
+    loggerTimezone: Asia/Shanghai
+    http.disableResponseCompression: true
+    search.denyPartialResponse: true
+    search.maxQueryDuration: 110s
+
+guance_insert:
+  replicaCount: 2
+  persistentVolume:
+    enabled: true
+    size: 8Gi
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  extraArgs:
+    envflag.enable: true
+    loggerFormat: json
+    loggerMaxArgLen: 10000
+    loggerTimezone: Asia/Shanghai
+
+guance_storage:
+  enabled: true
+  replicaCount: 2
+  retentionPeriod: 2y
+  persistentVolume:
+    enabled: true
+    size: 20Gi
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+  extraArgs:
+    envflag.enable: true
+    loggerFormat: json
+    loggerMaxArgLen: 10000
+    loggerTimezone: Asia/Shanghai
+    retentionFilters.config: ""
+
+scopedb:
+  enabled: false
+
+doris:
+  enabled: false
+
+guance_throttler:
+  enabled: false
+
+ingress:
+  enabled: false

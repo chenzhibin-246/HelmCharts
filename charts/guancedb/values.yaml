@@ -1,0 +1,1072 @@
+# Default values for guancedb.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+global:
+  storageClass: ''
+
+nodeSelector: {}
+tolerations: []
+
+# -- k8s cluster domain suffix, uses for building stroage pods' FQDN. Ref: [https://kubernetes.io/docs/tasks/administer-cluster/dns-custom-nameservers/](https://kubernetes.io/docs/tasks/administer-cluster/dns-custom-nameservers/)
+clusterDomainSuffix: cluster.local
+printNotes: true
+
+image:
+  # this will be used if image tags of components (e.g., guance_insert.image.tag) are not set
+  tag: ''
+
+imagePullSecrets: [ ]
+
+serviceAccount:
+  # name:
+  extraLabels: {}
+  # annotations: {}
+  # mount API token to pod directly
+  automountToken: true
+
+useDeprecatedDatakitAnnotation: true
+
+rbac: {}
+
+ingress:
+  # -- Enable deployment of ingress for guance-select & guance-insert component
+  enabled: false
+  # -- Ingress annotations
+  annotations: {}
+  #   kubernetes.io/ingress.class: nginx
+  #   kubernetes.io/tls-acme: 'true'
+
+  extraLabels: {}
+  # -- Array of host objects
+  hosts:
+    - name: guancedb.local
+      port: http
+  # -- Array of TLS objects
+  tls: []
+  #   - secretName: guance-select-ingress-tls
+  #     hosts:
+  #       - guance-select.local
+  # For Kubernetes >= 1.18 you should specify the ingress-controller via the field ingressClassName
+  # See https://kubernetes.io/blog/2020/04/02/improvements-to-the-ingress-api-in-kubernetes-1.18/#specifying-the-class-of-an-ingress
+  # ingressClassName: nginx
+  # -- pathType is only for k8s >= 1.1=
+  pathType: Prefix
+
+guance_select:
+  # -- Enable deployment of guance-select component. Can be deployed as Deployment(default) or StatefulSet
+  enabled: true
+  # -- guance-select container name
+  name: guance-select
+  strategy:
+    {}
+    # rollingUpdate:
+    #  maxSurge: 25%
+    #  maxUnavailable: 25%
+    # type: RollingUpdate
+  image:
+    # -- Image repository
+    repository: pubrepo.guance.com/guancedb/guance-select
+    # -- Image tag
+    tag: ''
+    # -- Image pull policy
+    pullPolicy: IfNotPresent
+  # -- Name of Priority Class
+  priorityClassName: ''
+  # -- Overrides the full name of guance-select component
+  fullnameOverride: ''
+  # -- Suppress rendering `--storageNode` FQDNs based on `guance-storage.replicaCount` value. If true suppress rendering `--storageNodes`, they can be re-defined in extraArgs
+  suppressStorageFQDNsRender: false
+  automountServiceAccountToken: true
+  timezone: Asia/Shanghai
+  # -- Required when scopedb.enabled=true. ScopeDB cluster tenancy. `shared` is for clusters serving many tenants. `dedicated` is for clusters dedicated to a few tenants.
+  tenancy: ''
+  # Extra command line arguments for guance-select component
+  extraArgs:
+    envflag.enable: 'true'
+    loggerFormat: json
+    loggerMaxArgLen: '20000'
+    loggerTimezone: Asia/Shanghai
+    http.disableResponseCompression: 'true'
+    search.denyPartialResponse: true
+    search.maxQueryDuration: 110s
+  annotations: {}
+  extraLabels: {}
+  # -- Additional environment variables (ex.: secret tokens, flags)
+  env: [] 
+  # - name: POD_NAME
+  #   valueFrom:
+  #     fieldRef:
+  #       apiVersion: v1
+  #       fieldPath: metadata.name
+  # - name: OTEL_RESOURCE_ATTRIBUTES
+  #   value: pod_name=$(POD_NAME)
+
+  queryQueue:
+    # -- Superseded by ScopeDB's own queue and its per-statement resource limits, which
+    # bound each query's rows and scanned bytes. Leave disabled; enabling it queues twice.
+    enabled: false
+    # -- Required to be true before enabled takes effect, so turning the queue back on is
+    # a deliberate choice rather than an inherited default.
+    acknowledgeSupersededByScopeDBQueue: false
+    redisAddr: ''
+    redisDB: 0
+    # -- Delete the keys the queue left in Redis. Retention is trimmed by the janitor
+    # inside guance-select, so with the queue disabled nothing ever reclaims them and
+    # the queries/leases/metrics keys sit there forever. Renders a post-install and
+    # post-upgrade hook Job whenever the queue is disabled but redisAddr is still set;
+    # it is idempotent and skips itself when Redis is unreachable (already torn down).
+    # Deletes only `{prefix}:*` and `{prefix:nodegroup}:*`, where prefix comes from
+    # guance_select.extraArgs["search.queryQueue.redisPrefix"] and defaults to guancedb.
+    # Scans the connected node only, so point redisAddr at each shard in turn if the
+    # queue ever ran against a Redis cluster rather than a single node or proxy.
+    cleanup:
+      enabled: true
+      # -- Connect with `redis-cli --tls --insecure`, matching the only TLS mode the queue
+      # itself has (search.queryQueue.redisTLSInsecure). Defaults to whatever
+      # guance_select.extraArgs["search.queryQueue.redisTLSInsecure"] says; set it here when
+      # that arg was dropped in the same change that disabled the queue. The cleanup also
+      # relies on redis-cli connection timeouts and configurable SCAN batch sizes.
+      tls: null
+      image:
+        repository: pubrepo.guance.com/base/redis
+        tag: '8.6'
+        pullPolicy: IfNotPresent
+      resources: {}
+
+  # Readiness & Liveness probes
+  probe:
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      timeoutSeconds: 5
+      failureThreshold: 3
+    liveness:
+      initialDelaySeconds: 5
+      periodSeconds: 15
+      timeoutSeconds: 5
+      failureThreshold: 3
+
+  horizontalPodAutoscaler:
+    # -- Use HPA for guance-select component
+    enabled: false
+    # -- Maximum replicas for HPA to use to to scale the guance-select component
+    maxReplicas: 10
+    # -- Minimum replicas for HPA to use to scale the guance-select component
+    minReplicas: 2
+    # -- Metric for HPA to use to scale the guance-select component
+    metrics: []
+
+  # Additional hostPath mounts
+  extraHostPathMounts:
+    []
+    # - name: certs-dir
+    #   mountPath: /etc/kubernetes/certs
+    #   subPath: ""
+    #   hostPath: /etc/kubernetes/certs
+    #   readOnly: true
+
+  # Extra Volumes for the pod
+  extraVolumes:
+    []
+    # - name: example
+    #   configMap:
+    #     name: example
+
+  # Extra Volume Mounts for the container
+  extraVolumeMounts:
+    []
+    # - name: example
+    #   mountPath: /example
+
+  extraContainers:
+    []
+    # - name: config-reloader
+    #   image: reloader-image
+
+  initContainers:
+    []
+    # - name: example
+    #   image: example-image
+
+  podDisruptionBudget:
+    # -- See `kubectl explain poddisruptionbudget.spec` for more. Ref: https://kubernetes.io/docs/tasks/run-application/configure-pdb/
+    enabled: false
+    # minAvailable: 1
+    # maxUnavailable: 1
+    labels: {}
+
+  # -- Array of tolerations object. Ref: [https://kubernetes.io/docs/concepts/configuration/assign-pod-node/](https://kubernetes.io/docs/concepts/configuration/assign-pod-node/)
+  tolerations:
+    []
+    # - key: "key"
+    #   operator: "Equal|Exists"
+    #   value: "value"
+    #   effect: "NoSchedule|PreferNoSchedule"
+
+  # -- Pod's node selector. Ref: [https://kubernetes.io/docs/user-guide/node-selection/](https://kubernetes.io/docs/user-guide/node-selection/)
+  nodeSelector: {}
+  # -- Pod affinity
+  affinity: {}
+  # -- Pod topologySpreadConstraints
+  topologySpreadConstraints: []
+  # -- Pod's annotations
+  podAnnotations: {}
+  # -- Count of guance-select pods
+  replicaCount: 3
+  # -- Container workdir
+  containerWorkingDir: ''
+  # -- Resource object
+  resources:
+    limits:
+      cpu: '1'
+      memory: 1Gi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+  # -- Pod's security context. Ref: [https://kubernetes.io/docs/tasks/configure-pod-container/security-context/](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  securityContext: {}
+  podSecurityContext: {}
+  # -- Cache root folder
+  cache:
+    mountPath: /cache
+  service:
+    # -- Service annotations
+    annotations: {}
+    # -- Service labels
+    labels: {}
+    # -- Service ClusterIP
+    clusterIP: None
+    # -- Service External IPs. Ref: [https://kubernetes.io/docs/user-guide/services/#external-ips](https://kubernetes.io/docs/user-guide/services/#external-ips)
+    externalIPs: []
+    # -- Extra service ports
+    extraServicePorts: []
+    # -- Service load balacner IP
+    loadBalancerIP: ''
+    # -- Load balancer source range
+    loadBalancerSourceRanges: []
+    # -- Service port
+    servicePort: 8481
+    # -- Target port
+    targetPort: http
+    # -- Service type
+    type: ClusterIP
+  persistentVolume:
+    # -- Create/use Persistent Volume Claim for guance-select component. Empty dir if false. If true, guance-select will create/use a Persistent Volume Claim
+    enabled: false
+
+    # -- Array of access mode. Must match those of existing PV or dynamic provisioner. Ref: [http://kubernetes.io/docs/user-guide/persistent-volumes/](http://kubernetes.io/docs/user-guide/persistent-volumes/)
+    accessModes:
+      - ReadWriteOnce
+    # -- Persistent volume annotations
+    annotations: {}
+
+    # -- Persistent volume labels
+    labels: {}
+
+    # -- Existing Claim name. Requires guance-select.persistentVolume.enabled: true. If defined, PVC must be created manually before volume will be bound
+    existingClaim: ''
+
+    ## guance-select data Persistent Volume mount root path
+    ##
+    # -- Size of the volume. Better to set the same as resource limit memory property
+    size: 2Gi
+    # -- Mount subpath
+    subPath: ''
+  serviceMonitor:
+    # -- Enable deployment of Service Monitor for guance-select component. This is Prometheus operator object
+    enabled: false
+    # -- Target namespace of ServiceMonitor manifest
+    namespace: ''
+    # -- Service Monitor labels
+    extraLabels: {}
+    # -- Service Monitor annotations
+    annotations: {}
+    # Commented. Prometheus scare interval for guance-select component
+    #    interval: 15s
+    # Commented. Prometheus pre-scrape timeout for guance-select component
+    #    scrapeTimeout: 5s
+    # -- Commented. HTTP scheme to use for scraping.
+    #    scheme: https
+    # -- Commented. TLS configuration to use when scraping the endpoint
+    #    tlsConfig:
+    #      insecureSkipVerify: true
+    # -- Service Monitor relabelings
+    relabelings: []
+
+guance_insert:
+  # -- Enable deployment of guance-insert component. Deployment is used
+  enabled: true
+  # -- guance-insert container name
+  name: guance-insert
+  image:
+    # -- Image repository
+    repository: pubrepo.guance.com/guancedb/guance-insert
+    # -- Image tag
+    tag: ''
+    # -- Image pull policy
+    pullPolicy: IfNotPresent
+  minReadySeconds: 0
+  rollingUpdate:
+    partition: 0
+  # -- Name of Priority Class
+  priorityClassName: ''
+  # -- Overrides the full name of guance-insert component
+  fullnameOverride: ''
+  # Extra command line arguments for guance-insert component
+  extraArgs:
+    envflag.enable: 'true'
+    loggerFormat: json
+    loggerMaxArgLen: '10000'
+    loggerTimezone: Asia/Shanghai
+  annotations: {}
+  extraLabels: {}
+  # -- Additional environment variables (ex.: secret tokens, flags)
+  env: []
+  # - name: POD_NAME
+  #   valueFrom:
+  #     fieldRef:
+  #       apiVersion: v1
+  #       fieldPath: metadata.name
+  # - name: OTEL_RESOURCE_ATTRIBUTES
+  #   value: pod_name=$(POD_NAME)  
+  # -- Suppress rendering `--storageNode` FQDNs based on `guance-storage.replicaCount` value. If true suppress rendering `--storageNodes`, they can be re-defined in extraArgs
+  suppressStorageFQDNsRender: false
+  automountServiceAccountToken: true
+
+  # Readiness & Liveness probes
+  probe:
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      timeoutSeconds: 5
+      failureThreshold: 3
+    liveness:
+      initialDelaySeconds: 5
+      periodSeconds: 15
+      timeoutSeconds: 5
+      failureThreshold: 3
+
+  # Horizontal Pod Autoscaling
+  horizontalPodAutoscaler:
+    # -- Use HPA for guance-insert component
+    enabled: false
+    # -- Maximum replicas for HPA to use to to scale the guance-insert component
+    maxReplicas: 10
+    # -- Minimum replicas for HPA to use to scale the guance-insert component
+    minReplicas: 2
+    # -- Metric for HPA to use to scale the guance-insert component
+    metrics: []
+
+  # Extra Volumes for the pod
+  extraVolumes:
+    []
+    # - name: example
+    #   configMap:
+    #     name: example
+
+  # Extra Volume Mounts for the container
+  extraVolumeMounts:
+    []
+    # - name: example
+    #   mountPath: /example
+
+  extraContainers:
+    []
+    # - name: config-reloader
+    #   image: reloader-image
+
+  initContainers:
+    []
+    # - name: example
+    #   image: example-image
+
+  podDisruptionBudget:
+    # -- See `kubectl explain poddisruptionbudget.spec` for more. Ref: [https://kubernetes.io/docs/tasks/run-application/configure-pdb/](https://kubernetes.io/docs/tasks/run-application/configure-pdb/)
+    enabled: false
+    # minAvailable: 1
+    # maxUnavailable: 1
+    labels: {}
+
+  # -- Array of tolerations object. Ref: [https://kubernetes.io/docs/concepts/configuration/assign-pod-node/](https://kubernetes.io/docs/concepts/configuration/assign-pod-node/)
+  tolerations:
+    []
+    # - key: "key"
+    #   operator: "Equal|Exists"
+    #   value: "value"
+    #   effect: "NoSchedule|PreferNoSchedule"
+
+  # -- Pod's node selector. Ref: [https://kubernetes.io/docs/user-guide/node-selection/](https://kubernetes.io/docs/user-guide/node-selection/)
+  nodeSelector: {}
+  # -- Pod affinity
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values:
+                  - guance-insert
+          topologyKey: kubernetes.io/hostname
+  # -- Pod's annotations
+  podAnnotations: {}
+  # -- Count of guance-insert pods
+  replicaCount: 3
+  # -- Container workdir
+  containerWorkingDir: ''
+  # -- Resource object
+  resources:
+    limits:
+      cpu: '12'
+      memory: 48Gi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  # -- Pod's security context. Ref: [https://kubernetes.io/docs/tasks/configure-pod-container/security-context/](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/)
+  securityContext: {}
+  podSecurityContext: {}
+  service:
+    # -- Service annotations
+    annotations: {}
+    # -- Service labels
+    labels: {}
+    # -- Service ClusterIP
+    clusterIP: None
+    # -- Service External IPs. Ref: [https://kubernetes.io/docs/user-guide/services/#external-ips]( https://kubernetes.io/docs/user-guide/services/#external-ips)
+    externalIPs: []
+    # -- Extra service ports
+    extraServicePorts: []
+    # -- Service load balancer IP
+    loadBalancerIP: ''
+    # -- Load balancer source range
+    loadBalancerSourceRanges: []
+    # -- Service port
+    servicePort: 8480
+    # -- Target port
+    targetPort: http
+    # -- Service type
+    type: ClusterIP
+  serviceMonitor:
+    # -- Enable deployment of Service Monitor for guance-insert component. This is Prometheus operator object
+    enabled: false
+    # -- Target namespace of ServiceMonitor manifest
+    namespace: ''
+    # -- Service Monitor labels
+    extraLabels: {}
+    # -- Service Monitor annotations
+    annotations: {}
+    # Commented. Prometheus scare interval for guance-insert component
+    #    interval: 15s
+    # Commented. Prometheus pre-scrape timeout for guance-insert component
+    #    scrapeTimeout: 5s
+    # -- Commented. HTTP scheme to use for scraping.
+    #    scheme: https
+    # -- Commented. TLS configuration to use when scraping the endpoint
+    #    tlsConfig:
+    #      insecureSkipVerify: true
+    # -- Service Monitor relabelings
+    relabelings: []
+
+  persistentVolume:
+    # -- Create/use Persistent Volume Claim for guance-storage component. Empty dir if false. If true,  guance-storage will create/use a Persistent Volume Claim
+    enabled: true
+
+    # -- Array of access modes. Must match those of existing PV or dynamic provisioner. Ref: [http://kubernetes.io/docs/user-guide/persistent-volumes/](http://kubernetes.io/docs/user-guide/persistent-volumes/)
+    accessModes:
+      - ReadWriteOnce
+    # -- Persistent volume annotations
+    annotations: {}
+    # -- Persistent volume labels
+    labels: {}
+    # -- Storage class name. Will be empty if not setted
+    storageClass: ''
+    # --  Existing Claim name. Requires guance-storage.persistentVolume.enabled: true. If defined, PVC must be created manually before volume will be bound
+    existingClaim: ''
+
+    size: 8Gi
+    # -- Mount subpath
+    subPath: ''
+
+    # file queue 负责日志类数据写入攒批，建议使用独立盘，而不是和流式聚合共用一块盘
+    fileQueue:
+      # -- PVC template name. Defaults to "guance-insert-file-queue"
+      name: ''
+      enabled: false
+      acknowledgeSharedVolumePerformanceDowngrade: false
+      size: 8Gi
+      storageClass: ''
+
+guance_meta:
+  # -- Enable deployment of guance-meta component. Disabled by default because it depends on external MySQL and Kodo.
+  enabled: false
+  # -- Metadata cluster identifier shared by guance-meta and the insert/select/storage components. Leave empty to use "default"; set explicitly when deploying multiple GuanceDB clusters, and make it unique per cluster (parameter tables are isolated per cluster). Multi-cluster deployment semantics: docs/Deployment StreamAggr Pinned Registration.md.
+  cluster: ''
+  # -- External guance-meta URL used when this deployment reuses a guance-meta instance from another cluster. Set this with enabled=false; it is mutually exclusive with enabled=true.
+  externalURL: ''
+  # -- guance-meta container name
+  name: guance-meta
+  image:
+    # -- Image repository
+    repository: pubrepo.guance.com/guancedb/guance-meta
+    # -- Image tag
+    tag: ''
+    # -- Image pull policy
+    pullPolicy: IfNotPresent
+  # -- Name of Priority Class
+  priorityClassName: ''
+  # -- Overrides the full name of guance-meta component
+  fullnameOverride: ''
+  automountServiceAccountToken: true
+  timezone: Asia/Shanghai
+  # Extra command line arguments for guance-meta component. Do not set mysql.addr/mysql.database/kodo.endpoint/meta.cluster here.
+  extraArgs:
+    envflag.enable: 'true'
+    loggerFormat: json
+    loggerTimezone: Asia/Shanghai
+    env: prod
+    httpListenAddr: :8483
+    otel.endpoint: http://%{HOST_IP}:9529/otel
+  annotations: {}
+  extraLabels: {}
+  env: []
+  replicaCount: 1
+  containerWorkingDir: ''
+  initContainers: []
+  extraContainers: []
+  extraVolumes: []
+  extraVolumeMounts: []
+  podAnnotations: {}
+  tolerations: []
+  nodeSelector: {}
+  affinity: {}
+  topologySpreadConstraints: []
+  securityContext: {}
+  podSecurityContext: {}
+  resources:
+    limits:
+      cpu: '1'
+      memory: 1Gi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  # -- External MySQL dependency. Database must exist before enabling this component; required tables are synced on startup and the DB user needs DDL permissions.
+  mysql:
+    addr: ''
+    database: guance_meta
+  kodo:
+    endpoint: ''
+  ui:
+    # -- Enable embedded management UI static files served by guance-meta.
+    enabled: true
+  secret:
+    # -- Existing Secret name. The Secret must be created before installing this chart.
+    # Required keys: metadataMySQLUsername, metadataMySQLPassword.
+    # Defaults to the guance-meta fullname when empty.
+    name: ''
+  probe:
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 15
+      timeoutSeconds: 5
+      failureThreshold: 3
+    liveness:
+      initialDelaySeconds: 5
+      periodSeconds: 15
+      timeoutSeconds: 5
+      failureThreshold: 3
+  service:
+    annotations: {}
+    labels: {}
+    clusterIP: ''
+    externalIPs: []
+    extraPorts: []
+    loadBalancerIP: ''
+    loadBalancerSourceRanges: []
+    servicePort: 8483
+    targetPort: http
+    type: ClusterIP
+  serviceMonitor:
+    # -- Enable deployment of Service Monitor for guance-meta component.
+    enabled: false
+    namespace: ''
+    extraLabels: {}
+    annotations: {}
+    relabelings: []
+  ingress:
+    # -- Enable Ingress for the embedded management UI served by guance-meta. Only /, /login, /config, /streamaggr, /assets, /favicon.svg and /api are exposed.
+    enabled: false
+    annotations: {}
+    extraLabels: {}
+    hosts:
+      - name: guance-meta-ui.local
+        path: /
+        port: http
+    tls: []
+    ingressClassName: ''
+
+guance_storage:
+  # -- Enable deployment of guance-storage component. StatefulSet is used
+  enabled: true
+  # -- guance-storage container name
+  name: guance-storage
+  image:
+    # -- Image repository
+    repository: pubrepo.guance.com/guancedb/guance-storage
+    # -- Image tag
+    tag: ''
+    # -- Image pull policy
+    pullPolicy: IfNotPresent
+  # -- Name of Priority Class
+  priorityClassName: ''
+  # -- Overrides the full name of guance-storage component
+  fullnameOverride:
+  automountServiceAccountToken: true
+  # -- Additional environment variables (ex.: secret tokens, flags)
+  env: []
+  # -- Data retention period. Supported values 1w, 1d, number without measurement means month, e.g. 2 = 2month
+  retentionPeriod: 2y
+  # Additional guance-storage container arguments. Extra command line arguments for guance-storage component
+  extraArgs:
+    retentionFilters.config: http://kodo.forethought-kodo:9527/v1/workspace_retention
+    envflag.enable: 'true'
+    loggerFormat: json
+    loggerMaxArgLen: '10000'
+    loggerTimezone: Asia/Shanghai
+
+  # Additional hostPath mounts
+  extraHostPathMounts:
+    []
+    # - name: certs-dir
+    #   mountPath: /etc/kubernetes/certs
+    #   subPath: ""
+    #   hostPath: /etc/kubernetes/certs
+    #   readOnly: true
+
+  # Extra Volumes for the pod
+  extraVolumes:
+    []
+    # - name: example
+    #   configMap:
+    #     name: example
+
+  # Extra Volume Mounts for the container
+  extraVolumeMounts:
+    []
+    # - name: example
+    #   mountPath: /example
+
+  extraContainers:
+    []
+    # - name: config-reloader
+    #   image: reloader-image
+
+  extraSecretMounts:
+    []
+    # - name: secret
+    #  mountPath: /etc/credentials
+    #  subPath: ""
+    #  readOnly: true
+
+  initContainers:
+    []
+    # - name: vmrestore
+    #   image: victoriametrics/vmrestore:latest
+    #   volumeMounts:
+    #   - mountPath: /storage
+    #     name: guance-storage-volume
+    #   - mountPath: /etc/vm/creds
+    #     name: secret-remote-storage-keys
+    #     readOnly: true
+    #   args:
+    #   - -storageDataPath=/storage
+    #   - -src=s3://your_bucket/folder/latest
+    #   - -credsFilePath=/etc/vm/creds/credentials
+
+  # -- See `kubectl explain poddisruptionbudget.spec` for more. Ref: [https://kubernetes.io/docs/tasks/run-application/configure-pdb/](https://kubernetes.io/docs/tasks/run-application/configure-pdb/)
+  podDisruptionBudget:
+    enabled: false
+    # minAvailable: 1
+    # maxUnavailable: 1
+    labels: {}
+
+  # -- Array of tolerations object. Node tolerations for server scheduling to nodes with taints. Ref: [https://kubernetes.io/docs/concepts/configuration/assign-pod-node/](https://kubernetes.io/docs/concepts/configuration/assign-pod-node/)
+  ##
+  tolerations:
+    []
+    # - key: "key"
+    #   operator: "Equal|Exists"
+    #   value: "value"
+    #   effect: "NoSchedule|PreferNoSchedule"
+
+  # -- Pod's node selector. Ref: [https://kubernetes.io/docs/user-guide/node-selection/](https://kubernetes.io/docs/user-guide/node-selection/)
+  nodeSelector: {}
+
+  # -- Pod affinity
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values:
+                  - guance-storage
+          topologyKey: kubernetes.io/hostname
+
+  ## Use an alternate scheduler, e.g. "stork".
+  ## ref: https://kubernetes.io/docs/tasks/administer-cluster/configure-multiple-schedulers/
+  ##
+  # schedulerName:
+
+  persistentVolume:
+    # -- Create/use Persistent Volume Claim for guance-storage component. Empty dir if false. If true,  guance-storage will create/use a Persistent Volume Claim
+    enabled: true
+
+    # -- Array of access modes. Must match those of existing PV or dynamic provisioner. Ref: [http://kubernetes.io/docs/user-guide/persistent-volumes/](http://kubernetes.io/docs/user-guide/persistent-volumes/)
+    accessModes:
+      - ReadWriteOnce
+    # -- Persistent volume annotations
+    annotations: {}
+    # -- Persistent volume labels
+    labels: {}
+    # -- Storage class name. Will be empty if not setted
+    storageClass: ''
+    # --  Existing Claim name. Requires guance-storage.persistentVolume.enabled: true. If defined, PVC must be created manually before volume will be bound
+    existingClaim: ''
+
+    # -- Data root path. guance-storage data Persistent Volume mount root path
+    mountPath: /storage
+    # -- Size of the volume. Better to set the same as resource limit memory property
+    size: 8Gi
+    # -- Mount subpath
+    subPath: ''
+
+  # -- Pod's annotations
+  podAnnotations: {}
+  annotations: {}
+  extraLabels: {}
+  # -- Count of guance-storage pods
+  replicaCount: 3
+  # -- Container workdir
+  containerWorkingDir: ''
+  # -- Deploy order policy for StatefulSet pods
+  podManagementPolicy: OrderedReady
+  rollingUpdate:
+    maxUnavailable: 100%
+
+  # -- Resource object. Ref: [http://kubernetes.io/docs/user-guide/compute-resources/](http://kubernetes.io/docs/user-guide/compute-resources/)
+  resources:
+    limits:
+      cpu: '2'
+      memory: 4Gi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    # limits:
+    #   cpu: 500m
+    #   memory: 512Mi
+    # requests:
+    #   cpu: 500m
+    #   memory: 512Mi
+
+  # -- Pod's security context. Ref: [https://kubernetes.io/docs/tasks/configure-pod-container/security-context/](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/)
+  securityContext: {}
+  podSecurityContext: {}
+  service:
+    clusterIP: None
+    # -- Publish not-ready addresses for the headless service, so vminsert/vmselect can discover vmstorage pods via DNS before they pass readiness checks
+    publishNotReadyAddresses: true
+    # -- Service annotations
+    annotations: {}
+    # -- Service labels
+    labels: {}
+    # -- Service port
+    servicePort: 8482
+    # -- Port for accepting connections from guance-insert
+    insertPort: 8400
+    # -- Port for accepting connections from guance-select
+    selectPort: 8401
+    # -- Extra service ports
+    extraServicePorts: []
+  # -- Pod's termination grace period in seconds
+  terminationGracePeriodSeconds: 60
+  probe:
+    readiness:
+      httpGet:
+        path: /health
+        port: http
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      timeoutSeconds: 5
+      failureThreshold: 3
+    liveness:
+      tcpSocket:
+        port: http
+      initialDelaySeconds: 30
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 10
+  serviceMonitor:
+    # -- Enable deployment of Service Monitor for guance-storage component. This is Prometheus operator object
+    enabled: false
+    # -- Target namespace of ServiceMonitor manifest
+    namespace: ''
+    # -- Service Monitor labels
+    extraLabels: {}
+    # -- Service Monitor annotations
+    annotations: {}
+    # Commented. Prometheus scare interval for guance-storage component
+    #    interval: 15s
+    # Commented. Prometheus pre-scrape timeout for guance-storage component
+    #    scrapeTimeout: 5s
+    # -- Commented. HTTP scheme to use for scraping.
+    #    scheme: https
+    # -- Commented. TLS configuration to use when scraping the endpoint
+    #    tlsConfig:
+    #      insecureSkipVerify: true
+    # -- Service Monitor relabelings
+    relabelings: []
+
+streamAggr:
+  enabled: true
+
+timeIndex:
+  # -- Build the time index. Queries on ScopeDB >= v0.5.19 skip it, so it only pays off on older versions.
+  enabled: false
+  # -- Delete the index left on disk by a previous `enabled: true`. Requires `enabled: false`.
+  prune: false
+  path: /data/time-index
+
+doris:
+  enabled: false
+  feIPs: []
+  rootPassword: ''
+  userReadPassword: ''
+  # memory size for cache data
+  cacheSizeLimit: 4Gi
+
+scopedb:
+  enabled: false
+  fullnameOverride: scopedb
+
+guance_throttler:
+  # -- Enable deployment of guance-throttler component. StatefulSet is used
+  enabled: false
+  # -- guance-throttler container name
+  name: guance-throttler
+  image:
+    # -- Image repository
+    repository: pubrepo.guance.com/guancedb/victoria-metrics
+    # -- Image tag
+    tag: v1.101.0
+    # -- Image pull policy
+    pullPolicy: IfNotPresent
+  # -- Name of Priority Class
+  priorityClassName: ''
+  # -- Overrides the full name of guance-throttler component
+  fullnameOverride:
+  automountServiceAccountToken: true
+  # -- Additional environment variables (ex.: secret tokens, flags)
+  env: []
+  # -- Data retention period. Supported values 1w, 1d, number without measurement means month, e.g. 2 = 2month
+  retentionPeriod: 16w
+  # Additional guance-throttler container arguments. Extra command line arguments for guance-throttler component
+  extraArgs:
+    envflag.enable: 'true'
+    loggerFormat: json
+    loggerMaxArgLen: '10000'
+    loggerTimezone: Asia/Shanghai
+
+  # Additional hostPath mounts
+  extraHostPathMounts:
+    []
+    # - name: certs-dir
+    #   mountPath: /etc/kubernetes/certs
+    #   subPath: ""
+    #   hostPath: /etc/kubernetes/certs
+  #   readOnly: true
+
+  # Extra Volumes for the pod
+  extraVolumes:
+    []
+    # - name: example
+    #   configMap:
+  #     name: example
+
+  # Extra Volume Mounts for the container
+  extraVolumeMounts:
+    []
+    # - name: example
+  #   mountPath: /example
+
+  extraContainers:
+    []
+    # - name: config-reloader
+  #   image: reloader-image
+
+  extraSecretMounts:
+    []
+    # - name: secret
+    #  mountPath: /etc/credentials
+    #  subPath: ""
+  #  readOnly: true
+
+  initContainers:
+    []
+    # - name: vmrestore
+    #   image: victoriametrics/vmrestore:latest
+    #   volumeMounts:
+    #   - mountPath: /storage
+    #     name: guance-throttler-volume
+    #   - mountPath: /etc/vm/creds
+    #     name: secret-remote-storage-keys
+    #     readOnly: true
+    #   args:
+    #   - -storageDataPath=/storage
+    #   - -src=s3://your_bucket/folder/latest
+  #   - -credsFilePath=/etc/vm/creds/credentials
+
+  # -- See `kubectl explain poddisruptionbudget.spec` for more. Ref: [https://kubernetes.io/docs/tasks/run-application/configure-pdb/](https://kubernetes.io/docs/tasks/run-application/configure-pdb/)
+  podDisruptionBudget:
+    enabled: false
+    # minAvailable: 1
+    # maxUnavailable: 1
+    labels: {}
+
+  # -- Array of tolerations object. Node tolerations for server scheduling to nodes with taints. Ref: [https://kubernetes.io/docs/concepts/configuration/assign-pod-node/](https://kubernetes.io/docs/concepts/configuration/assign-pod-node/)
+  ##
+  tolerations:
+    []
+    # - key: "key"
+    #   operator: "Equal|Exists"
+    #   value: "value"
+  #   effect: "NoSchedule|PreferNoSchedule"
+
+  # -- Pod's node selector. Ref: [https://kubernetes.io/docs/user-guide/node-selection/](https://kubernetes.io/docs/user-guide/node-selection/)
+  nodeSelector: {}
+
+  # -- Pod affinity
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values:
+                  - guance-throttler
+          topologyKey: kubernetes.io/hostname
+
+  ## Use an alternate scheduler, e.g. "stork".
+  ## ref: https://kubernetes.io/docs/tasks/administer-cluster/configure-multiple-schedulers/
+  ##
+  # schedulerName:
+
+  persistentVolume:
+    # -- Create/use Persistent Volume Claim for guance-throttler component. Empty dir if false. If true,  guance-throttler will create/use a Persistent Volume Claim
+    enabled: true
+
+    # -- Array of access modes. Must match those of existing PV or dynamic provisioner. Ref: [http://kubernetes.io/docs/user-guide/persistent-volumes/](http://kubernetes.io/docs/user-guide/persistent-volumes/)
+    accessModes:
+      - ReadWriteOnce
+    # -- Persistent volume annotations
+    annotations: {}
+    # -- Persistent volume labels
+    labels: {}
+    # -- Storage class name. Will be empty if not setted
+    storageClass: ''
+    # --  Existing Claim name. Requires guance-throttler.persistentVolume.enabled: true. If defined, PVC must be created manually before volume will be bound
+    existingClaim: ''
+
+    # -- Data root path. guance-throttler data Persistent Volume mount root path
+    mountPath: /storage
+    # -- Size of the volume. Better to set the same as resource limit memory property
+    size: 1Gi
+    # -- Mount subpath
+    subPath: ''
+
+  # -- Pod's annotations
+  podAnnotations: {}
+  annotations: {}
+  extraLabels: {}
+  # -- Count of guance-throttler pods
+  replicaCount: 1
+  # -- Container workdir
+  containerWorkingDir: ''
+  # -- Deploy order policy for StatefulSet pods
+  podManagementPolicy: OrderedReady
+
+  # -- Resource object. Ref: [http://kubernetes.io/docs/user-guide/compute-resources/](http://kubernetes.io/docs/user-guide/compute-resources/)
+  resources:
+    limits:
+      cpu: '2'
+      memory: 4Gi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    # limits:
+    #   cpu: 500m
+    #   memory: 512Mi
+    # requests:
+    #   cpu: 500m
+    #   memory: 512Mi
+
+  # -- Pod's security context. Ref: [https://kubernetes.io/docs/tasks/configure-pod-container/security-context/](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/)
+  securityContext: {}
+  podSecurityContext: {}
+  service:
+    clusterIP: None
+    # -- Service annotations
+    annotations: {}
+    # -- Service labels
+    labels: {}
+    # -- Service port
+    servicePort: 8428
+    # -- Port for accepting connections from guance-insert
+    insertPort: 8400
+    # -- Port for accepting connections from guance-select
+    selectPort: 8401
+    # -- Extra service ports
+    extraServicePorts: []
+  # -- Pod's termination grace period in seconds
+  terminationGracePeriodSeconds: 60
+  probe:
+    readiness:
+      httpGet:
+        path: /health
+        port: http
+      initialDelaySeconds: 5
+      periodSeconds: 15
+      timeoutSeconds: 5
+      failureThreshold: 3
+    liveness:
+      tcpSocket:
+        port: http
+      initialDelaySeconds: 30
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 10
+  serviceMonitor:
+    # -- Enable deployment of Service Monitor for guance-throttler component. This is Prometheus operator object
+    enabled: false
+    # -- Target namespace of ServiceMonitor manifest
+    namespace: ''
+    # -- Service Monitor labels
+    extraLabels: {}
+    # -- Service Monitor annotations
+    annotations: {}
+    # Commented. Prometheus scare interval for guance-throttler component
+    #    interval: 15s
+    # Commented. Prometheus pre-scrape timeout for guance-throttler component
+    #    scrapeTimeout: 5s
+    # -- Commented. HTTP scheme to use for scraping.
+    #    scheme: https
+    # -- Commented. TLS configuration to use when scraping the endpoint
+    #    tlsConfig:
+    #      insecureSkipVerify: true
+    # -- Service Monitor relabelings
+    relabelings: []
+  scrape:
+    enabled: true

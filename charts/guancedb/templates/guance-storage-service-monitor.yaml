@@ -1,0 +1,44 @@
+{{- if and .Values.guance_storage.enabled .Values.guance_storage.serviceMonitor.enabled -}}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  {{- if .Values.guance_storage.serviceMonitor.annotations }}
+  annotations:
+{{ toYaml .Values.guance_storage.serviceMonitor.annotations | indent 4 }}
+  {{- end }}
+  labels:
+  {{- include "guancedb.guance_storage.labels" . | nindent 4 }}
+  {{- if .Values.guance_storage.serviceMonitor.extraLabels }}
+{{ toYaml .Values.guance_storage.serviceMonitor.extraLabels | indent 4 }}
+  {{- end }}
+  name: {{ template "guancedb.guance_storage.fullname" . }}
+  {{- if .Values.guance_storage.serviceMonitor.namespace }}
+  namespace: {{ .Values.guance_storage.serviceMonitor.namespace }}
+  {{- end }}
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      {{- include "guancedb.guance_storage.matchLabels" . | nindent 6 }}
+  endpoints:
+    - port: http
+      {{- if .Values.guance_storage.serviceMonitor.scheme }}
+      scheme: {{ .Values.guance_storage.serviceMonitor.scheme }}
+      {{- end }}
+      {{- if .Values.guance_storage.serviceMonitor.interval }}
+      interval: {{ .Values.guance_storage.serviceMonitor.interval }}
+      {{- end }}
+      {{- if .Values.guance_storage.serviceMonitor.scrapeTimeout }}
+      scrapeTimeout: {{ .Values.guance_storage.serviceMonitor.scrapeTimeout }}
+      {{- end }}
+      {{- with .Values.guance_storage.serviceMonitor.tlsConfig }}
+      tlsConfig:
+          {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.guance_storage.serviceMonitor.relabelings }}
+      relabelings:
+          {{- toYaml . | nindent 8 }}
+      {{- end }}
+  {{- end }}

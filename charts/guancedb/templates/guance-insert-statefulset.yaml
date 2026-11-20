@@ -1,0 +1,305 @@
+{{- $enableLogDatasource := and .Values.guance_insert.enabled (or .Values.doris.enabled .Values.scopedb.enabled) -}}
+{{- $enableFileQueueVolume := and $enableLogDatasource .Values.guance_insert.persistentVolume.fileQueue.enabled -}}
+{{- $fileQueueVolumeName := .Values.guance_insert.persistentVolume.fileQueue.name | default "guance-insert-file-queue" -}}
+{{- if and $enableLogDatasource .Values.streamAggr.enabled (not $enableFileQueueVolume) (not .Values.guance_insert.persistentVolume.fileQueue.acknowledgeSharedVolumePerformanceDowngrade) -}}
+  {{- fail (printf "%s\n%s\n%s"
+    "The file-queue shares a volume with stream-aggr, which may degrade performance."
+    "Configure a dedicated volume under guance_insert.persistentVolume.fileQueue."
+    "To accept this risk, set guance_insert.persistentVolume.fileQueue.acknowledgeSharedVolumePerformanceDowngrade=true."
+  ) -}}
+{{- end -}}
+{{- $insertArgs := .Values.guance_insert.extraArgs | default dict -}}
+{{- $metaClientURL := include "guancedb.guance_meta.clientURL" . -}}
+{{- if .Values.guance_insert.enabled -}}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+{{- with .Values.guance_insert.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+{{- end }}
+  labels:
+    {{- include "guancedb.guance_insert.labels" . | nindent 4 }}
+    {{- with .Values.guance_insert.extraLabels }}
+      {{- toYaml . | nindent 4 }}
+    {{- end }}
+  name: {{ template "guancedb.guance_insert.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  serviceName: {{ template "guancedb.guance_insert.fullname" . }}
+  selector:
+    matchLabels:
+      {{- include "guancedb.guance_insert.matchLabels" . | nindent 6 }}
+  {{- if not .Values.guance_insert.horizontalPodAutoscaler.enabled }}
+  replicas: {{ .Values.guance_insert.replicaCount }}
+  {{- end }}
+  podManagementPolicy: {{ .Values.guance_insert.podManagementPolicy }}
+  minReadySeconds: {{ .Values.guance_insert.minReadySeconds }}
+  updateStrategy:
+    rollingUpdate:
+      partition: {{ .Values.guance_insert.rollingUpdate.partition }}
+  template:
+    metadata:
+      annotations:
+        {{ if .Values.alwaysRoll }}always-roll: {{ randAlpha 4 | quote }}{{ end }}
+        {{- if .Values.useDeprecatedDatakitAnnotation }}
+        {{- include "guancedb.datakitAnnotationDeprecated" "8480" | nindent 8 }}
+        {{- end }}
+      {{- with .Values.guance_insert.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "guancedb.guance_insert.labels" . | nindent 8 }}
+        {{- with .Values.guance_insert.extraLabels }}
+          {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.guance_insert.priorityClassName }}
+      priorityClassName: "{{ . }}"
+      {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountToken }}
+      {{- with .Values.guance_insert.initContainers }}
+      initContainers:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ template "guancedb.name" . }}-{{ .Values.guance_insert.name }}
+          image: "{{ if .Values.image.registry }}{{ .Values.image.registry }}/guancedb/guance-insert{{ else }}{{ .Values.guance_insert.image.repository }}{{ end }}:{{ required "image tag must be set" (.Values.guance_insert.image.tag | default .Values.image.tag | default .Chart.AppVersion) }}"
+          imagePullPolicy: "{{ or .Values.image.pullPolicy .Values.guance_insert.image.pullPolicy }}"
+          {{- if .Values.guance_insert.containerWorkingDir }}
+          workingDir: {{ .Values.guance_insert.containerWorkingDir }}
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.guance_insert.podSecurityContext | nindent 12 }}
+          args:
+            - --otel.endpoint=http://%{HOST_IP}:9529/otel
+          {{- if and .Values.guance_storage.enabled (not .Values.guance_insert.suppressStorageFQDNsRender) }}
+          {{ include "guancedb.guance_insert.guance_storage-pod-fqdn" . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.streamAggr.enabled }}
+            - --streamAggr.dataPath=/data/stream-aggr
+          {{- else if .Values.scopedb.enabled }}
+              {{ fail "streamAggr.enabled must be true when scopedb.enabled is true" }}
+          {{- end }}
+          {{- if and .Values.timeIndex.enabled .Values.timeIndex.prune }}
+            {{ fail "timeIndex.prune deletes the index, so it requires timeIndex.enabled=false" }}
+          {{- end }}
+          {{- if .Values.timeIndex.enabled }}
+            - --timeIndex.dataPath={{ .Values.timeIndex.path }}
+          {{- else if .Values.timeIndex.prune }}
+            - --timeIndex.dataPath={{ .Values.timeIndex.path }}
+            - --timeIndex.prune
+          {{- end }}
+          {{- if .Values.doris.enabled }}
+            {{ range $ip := .Values.doris.feIPs -}}
+              {{ printf "- --dorisFENode=%s\n" $ip | nindent 12 }}
+            {{ end -}}
+          {{- end }}
+          {{- if .Values.scopedb.enabled }}
+            - --scopeDB.node={{ .Values.scopedb.fullnameOverride }}
+            {{- if (eq 1 (len .Values.scopedb.nodegroups)) }}
+            - --scopeDB.nodegroup.ctl=default
+            - --scopeDB.nodegroup.ingest=default
+            {{- end }}
+          {{- end }}
+
+          {{- $providedFileQueueMaxFileSize := false }}
+          {{- $setFileQueueWorkers := false }}
+          {{- $setConcurrentGetIndexRequests := false }}
+          {{- range $key, $value := $insertArgs }}
+            {{- $valueToRender := $value }}
+            {{- if or (kindIs "float64" $value) (kindIs "float32" $value) }}
+              {{- if eq $value (floor $value) }}
+                {{- $valueToRender = printf "%.0f" $value }}
+              {{- end }}
+            {{- end }}
+            - --{{ $key }}={{ $valueToRender }}
+            {{- if and $.Values.scopedb.enabled (or (eq $key "maxConcurrentGetIndexRequests") (eq $key "fileQueue.workers")) (ne $.Values.image.tag "dev") }}
+              {{- fail (printf "%s should not be set manually" $key) }}
+            {{- else if eq $key "fileQueue.maxFileSize" }}
+              {{- $providedFileQueueMaxFileSize = true }}
+            {{- end }}
+          {{- end }}
+          {{- if and $metaClientURL (not (hasKey $insertArgs "meta.addr")) }}
+            - {{ printf "%s=%s" "--meta.addr" $metaClientURL | quote }}
+          {{- end }}
+          {{- if not (hasKey $insertArgs "meta.cluster") }}
+            - {{ printf "%s=%s" "--meta.cluster" (.Values.guance_meta.cluster | default "default") | quote }}
+          {{- end }}
+
+          {{- if $enableFileQueueVolume }}
+            - --fileQueue.dataPath=/file-queue
+          {{- end }}
+          {{- if and .Values.scopedb.enabled (not $providedFileQueueMaxFileSize) }}
+            - --fileQueue.maxFileSize=64MB
+          {{- end }}
+          {{- if and .Values.scopedb.enabled }}
+            {{- range $i, $nodegroup := .Values.scopedb.nodegroups }}
+              {{- if eq $nodegroup.name "ingest" }}
+                {{- $nodegroupReplicas := $nodegroup.replicaCount | default 1 }}
+                {{- if and $nodegroup.autoscaling $nodegroup.autoscaling.enabled }}
+                  {{- $nodegroupReplicas = $nodegroup.autoscaling.maxReplicas }}
+                {{- end }}
+                {{- if and $nodegroup.resources $nodegroup.resources.limits $nodegroup.resources.limits.cpu }}
+                  {{- $setFileQueueWorkers = true }}
+                  {{- $insertCPUCores := include "guancedb.cpuCores" (dict "value" $.Values.guance_insert.resources.limits.cpu "path" "guance_insert.resources.limits.cpu") | float64 }}
+            - --fileQueue.workers={{ ceil (mulf 16 $insertCPUCores) }}
+                {{- end }}
+              {{- else if eq $nodegroup.name "ingest-meta" }}
+                {{- $nodegroupReplicas := $nodegroup.replicaCount | default 1 }}
+                {{- if and $nodegroup.autoscaling $nodegroup.autoscaling.enabled }}
+                  {{- $nodegroupReplicas = $nodegroup.autoscaling.maxReplicas }}
+                {{- end }}
+                {{- if and $nodegroup.resources $nodegroup.resources.limits $nodegroup.resources.limits.cpu }}
+                  {{- $setConcurrentGetIndexRequests = true }}
+            - --maxConcurrentGetIndexRequests={{ ceil (divf (mul 10 $nodegroupReplicas (atoi (toString $nodegroup.resources.limits.cpu)))
+                                                                 $.Values.guance_insert.replicaCount) }}
+                {{- end }}
+              {{- end }}
+            {{- end }}
+            {{- if not (and $setFileQueueWorkers $setConcurrentGetIndexRequests) }}
+              {{ fail "nodegroup ingest or ingest-meta missing or invalid" }}
+            {{- end }}
+          {{- end }}
+          env:
+            - name: HOST_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+          {{- with .Values.guance_insert.env }}
+          {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.doris.enabled }}
+            - name: dorisPassword
+              valueFrom:
+                secretKeyRef:
+                  name: {{ template "guancedb.fullname" . }}
+                  key: dorisRootPassword
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 8480
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: {{ .Values.guance_insert.probe.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.guance_insert.probe.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.guance_insert.probe.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.guance_insert.probe.readiness.failureThreshold }}
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: {{ .Values.guance_insert.probe.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.guance_insert.probe.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.guance_insert.probe.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.guance_insert.probe.liveness.failureThreshold }}
+          volumeMounts:
+          {{- if or .Values.streamAggr.enabled .Values.timeIndex.enabled .Values.doris.enabled .Values.scopedb.enabled}}
+            - name: guance-insert-volume
+              mountPath: /data
+          {{- end }}
+          {{- if $enableFileQueueVolume }}
+            - name: {{ $fileQueueVolumeName }}
+              mountPath: /file-queue
+          {{- end }}
+          {{- with .Values.guance_insert.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources: {{- toYaml .Values.guance_insert.resources | nindent 12 }}
+        {{- with .Values.guance_insert.extraContainers }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.guance_insert.nodeSelector | default .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.guance_insert.securityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ template "guancedb.serviceAccountName" . }}
+      {{- with .Values.guance_insert.tolerations | default .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.guance_insert.affinity }}
+      affinity:
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+      {{- with .Values.guance_insert.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+        {{- if not .Values.guance_insert.persistentVolume.enabled }}
+        - name: guance-insert-volume
+          emptyDir: {}
+        {{- else }}
+        {{- if .Values.guance_insert.persistentVolume.existingClaim }}
+        - name: guance-insert-volume
+          persistentVolumeClaim:
+            claimName: {{ .Values.guance_insert.persistentVolume.existingClaim }}
+        {{- end }}
+        {{- end }}
+  {{- $mainNeedsTemplate := and .Values.guance_insert.persistentVolume.enabled (not .Values.guance_insert.persistentVolume.existingClaim) }}
+  {{- $fqNeedsTemplate := $enableFileQueueVolume }}
+  {{- if or $mainNeedsTemplate $fqNeedsTemplate }}
+  volumeClaimTemplates:
+    {{- if $mainNeedsTemplate }}
+    - metadata:
+        name: guance-insert-volume
+        {{- if .Values.guance_insert.persistentVolume.annotations }}
+        annotations:
+{{ toYaml .Values.guance_insert.persistentVolume.annotations | indent 10 }}
+        {{- end }}
+        {{- if .Values.guance_insert.persistentVolume.labels }}
+        labels:
+{{ toYaml .Values.guance_insert.persistentVolume.labels | indent 10 }}
+        {{- end }}
+      spec:
+        accessModes:
+{{ toYaml .Values.guance_insert.persistentVolume.accessModes | indent 10 }}
+        resources:
+          requests:
+            storage: "{{ .Values.guance_insert.persistentVolume.size }}"
+      {{- $storageClass := (or .Values.guance_insert.persistentVolume.storageClass .Values.global.storageClass) }}
+      {{- if $storageClass }}
+      {{- if (eq "-" $storageClass) }}
+        storageClassName: ""
+      {{- else }}
+        storageClassName: "{{ $storageClass }}"
+      {{- end }}
+      {{- end }}
+    {{- end }}
+    {{- if $fqNeedsTemplate }}
+    - metadata:
+        name: {{ $fileQueueVolumeName }}
+        {{- if .Values.guance_insert.persistentVolume.annotations }}
+        annotations:
+{{ toYaml .Values.guance_insert.persistentVolume.annotations | indent 10 }}
+        {{- end }}
+        {{- if .Values.guance_insert.persistentVolume.labels }}
+        labels:
+{{ toYaml .Values.guance_insert.persistentVolume.labels | indent 10 }}
+        {{- end }}
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: "{{ .Values.guance_insert.persistentVolume.fileQueue.size }}"
+      {{- $fileQueueStorageClass := (or .Values.guance_insert.persistentVolume.fileQueue.storageClass .Values.global.storageClass) }}
+      {{- if $fileQueueStorageClass }}
+      {{- if (eq "-" $fileQueueStorageClass) }}
+        storageClassName: ""
+      {{- else }}
+        storageClassName: "{{ $fileQueueStorageClass }}"
+      {{- end }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+{{- end }}

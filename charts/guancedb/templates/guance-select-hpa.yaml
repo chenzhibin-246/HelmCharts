@@ -1,0 +1,21 @@
+{{- if .Values.guance_select.horizontalPodAutoscaler.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  labels:
+    {{- include "guancedb.guance_select.labels" . | nindent 4 }}
+{{- with .Values.guance_select.extraLabels }}
+{{ toYaml . | indent 4 }}
+{{- end }}
+  name: {{ template "guancedb.guance_select.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  maxReplicas: {{ .Values.guance_select.horizontalPodAutoscaler.maxReplicas }}
+  minReplicas: {{ .Values.guance_select.horizontalPodAutoscaler.minReplicas }}
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ template "guancedb.guance_select.fullname" . }}
+  metrics:
+{{ toYaml .Values.guance_select.horizontalPodAutoscaler.metrics | indent 4 }}
+{{- end -}}

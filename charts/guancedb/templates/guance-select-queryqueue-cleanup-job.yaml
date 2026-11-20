@@ -1,0 +1,125 @@
+{{- /*
+The query queue trims its own keys from the janitor loop inside guance-select. With
+guance_select.queryQueue.enabled=false no janitor runs and no key carries a Redis TTL,
+so everything the queue wrote before it was disabled stays in Redis for good. This
+one-shot hook removes it. It renders only while a redisAddr is still configured — the
+address is what says "this deployment used to run the queue" — and is safe to re-run.
+*/ -}}
+{{- $queue := .Values.guance_select.queryQueue -}}
+{{- if and .Values.guance_select.enabled (not $queue.enabled) $queue.cleanup.enabled $queue.redisAddr -}}
+{{- $selectArgs := .Values.guance_select.extraArgs | default dict -}}
+{{- $prefix := index $selectArgs "search.queryQueue.redisPrefix" | default "guancedb" | toString -}}
+{{- $prefix = $prefix | trimPrefix "{" | trimSuffix "}" -}}
+{{- /* The queue's only TLS mode is InsecureSkipVerify, so --insecure rides along with --tls. */ -}}
+{{- $tls := index $selectArgs "search.queryQueue.redisTLSInsecure" | default false -}}
+{{- if not (kindIs "invalid" $queue.cleanup.tls) -}}
+{{- $tls = $queue.cleanup.tls -}}
+{{- end -}}
+{{- $tlsArgs := "" -}}
+{{- if $tls | toString | eq "true" -}}
+{{- $tlsArgs = " --tls --insecure" -}}
+{{- end -}}
+{{- $addr := splitList ":" ($queue.redisAddr | toString) -}}
+{{- $host := index $addr 0 -}}
+{{- $port := "6379" -}}
+{{- if gt (len $addr) 1 -}}
+{{- $port = index $addr 1 -}}
+{{- end -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ template "guancedb.guance_select.fullname" . }}-queryqueue-cleanup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "guancedb.guance_select.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: '5'
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  # Keep the result and logs available for diagnosis, while bounding stale hooks
+  # in clusters that no longer receive upgrades.
+  ttlSecondsAfterFinished: 604800
+  # Let the Pod reach a terminal state before the Job-wide deadline so its
+  # status and logs remain available until this Job's TTL cleanup.
+  backoffLimit: 0
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        {{- include "guancedb.guance_select.matchLabels" . | nindent 8 }}
+    spec:
+      activeDeadlineSeconds: 540
+      restartPolicy: Never
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+      {{ toYaml .Values.imagePullSecrets | indent 2 }}
+      {{- end }}
+      {{- with .Values.guance_select.nodeSelector | default .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.guance_select.tolerations | default .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: queryqueue-cleanup
+          image: "{{ $queue.cleanup.image.repository }}:{{ $queue.cleanup.image.tag }}"
+          imagePullPolicy: {{ $queue.cleanup.image.pullPolicy }}
+          env:
+            # Optional: the queue password lives in a secret this chart does not own, and
+            # a Redis without auth has no such key at all. A missing key must not wedge
+            # the pod, so resolve it leniently and drop it when it comes back empty.
+            - name: REDISCLI_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: guancedb
+                  key: queryqueueRedisPassword
+                  optional: true
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+
+              if [ -z "${REDISCLI_AUTH:-}" ]; then
+                unset REDISCLI_AUTH
+              fi
+
+              CLI="redis-cli -h {{ $host }} -p {{ $port }} -n {{ $queue.redisDB }} -t 10{{ $tlsArgs }}"
+
+              # Report why rather than exiting quietly: a torn-down Redis and a redis-cli
+              # that rejects --tls both land here, and only the first one is expected.
+              echo "query queue cleanup: probing redis {{ $host }}:{{ $port }} db {{ $queue.redisDB }}"
+              probe=$($CLI ping 2>&1) || true
+              case "$probe" in
+                *PONG*) ;;
+                *)
+                  echo "query queue cleanup: skipping, redis {{ $host }}:{{ $port }} did not answer PING: $probe"
+                  exit 0
+                  ;;
+              esac
+
+              deleted=0
+              # Without a nodegroup the prefix is {p}, with one it is {p:nodegroup};
+              # nodegroups come from ScopeDB at runtime, so match rather than enumerate.
+              for pattern in '{{ printf "{%s}:*" $prefix }}' '{{ printf "{%s:*}:*" $prefix }}'; do
+                echo "query queue cleanup: scanning for $pattern"
+                if ! keys=$($CLI --scan --pattern "$pattern" --count 1000 2>&1); then
+                  echo "query queue cleanup: failed scanning for $pattern: $keys"
+                  exit 1
+                fi
+                [ -n "$keys" ] || continue
+                count=$(printf '%s\n' "$keys" | wc -l | tr -d ' ')
+                printf '%s\n' "$keys" | tr '\n' '\0' | xargs -0 -r -n 200 $CLI del >/dev/null
+                deleted=$((deleted + count))
+                echo "query queue cleanup: deleted $count key(s) matching $pattern"
+              done
+
+              echo "query queue cleanup: done, $deleted key(s) removed from db {{ $queue.redisDB }}"
+          resources:
+            {{- with $queue.cleanup.resources }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+{{- end }}

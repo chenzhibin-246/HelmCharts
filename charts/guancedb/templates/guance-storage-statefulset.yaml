@@ -1,0 +1,189 @@
+{{- if .Values.guance_storage.enabled -}}
+{{- $storageArgs := .Values.guance_storage.extraArgs | default dict -}}
+{{- $metaClientURL := include "guancedb.guance_meta.clientURL" . -}}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+{{- with .Values.guance_storage.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+{{- end }}
+  labels:
+    {{- include "guancedb.guance_storage.labels" . | nindent 4 }}
+{{- with .Values.guance_storage.extraLabels }}
+{{ toYaml . | indent 4 }}
+{{- end }}
+  name: {{ template "guancedb.guance_storage.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  serviceName: {{ template "guancedb.guance_storage.fullname" . }}
+  selector:
+    matchLabels:
+      {{- include "guancedb.guance_storage.matchLabels" . | nindent 6 }}
+  replicas: {{ .Values.guance_storage.replicaCount }}
+  podManagementPolicy: {{ .Values.guance_storage.podManagementPolicy }}
+  updateStrategy:
+    rollingUpdate:
+      maxUnavailable: {{ .Values.guance_storage.rollingUpdate.maxUnavailable }}
+  template:
+    metadata:
+      annotations:
+        {{ if .Values.alwaysRoll }}always-roll: {{ randAlpha 4 | quote }}{{ end }}
+        {{- if .Values.useDeprecatedDatakitAnnotation }}
+        {{- include "guancedb.datakitAnnotationDeprecated" "8482" | nindent 8 }}
+        {{- end }}
+    {{- if .Values.guance_storage.podAnnotations }}
+{{ toYaml .Values.guance_storage.podAnnotations | indent 8 }}
+    {{- end }}
+      labels:
+        {{- include "guancedb.guance_storage.labels" . | nindent 8 }}
+{{- with .Values.guance_storage.extraLabels }}
+{{ toYaml . | indent 8 }}
+{{- end }}
+    spec:
+      {{- if .Values.guance_storage.priorityClassName }}
+      priorityClassName: "{{ .Values.guance_storage.priorityClassName }}"
+      {{- end }}
+      {{- if .Values.guance_storage.schedulerName }}
+      schedulerName: "{{ .Values.guance_storage.schedulerName }}"
+      {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountToken }}
+      {{- if eq (include "guancedb.guance_storage.hasInitContainer" . ) "true" }}
+      initContainers:
+        {{- include "guancedb.guance_storage.initContiners" . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ template "guancedb.name" . }}-{{ .Values.guance_storage.name }}
+          image: "{{ if .Values.image.registry }}{{ .Values.image.registry }}/guancedb/guance-storage{{ else }}{{ .Values.guance_storage.image.repository }}{{ end }}:{{ required "image tag must be set" (.Values.guance_storage.image.tag | default .Values.image.tag | default .Chart.AppVersion) }}"
+          imagePullPolicy: "{{ or .Values.image.pullPolicy .Values.guance_insert.image.pullPolicy }}"
+          {{- if .Values.guance_storage.containerWorkingDir }}
+          workingDir: {{ .Values.guance_storage.containerWorkingDir }}
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.guance_storage.podSecurityContext | nindent 12 }}
+          args:
+            - --otel.endpoint=http://%{HOST_IP}:9529/otel
+            - {{ printf "%s=%s" "--retentionPeriod" (toString .Values.guance_storage.retentionPeriod) | quote}}
+            - {{ printf "%s=%s" "--storageDataPath" .Values.guance_storage.persistentVolume.mountPath | quote}}
+          {{- range $key, $value := $storageArgs }}
+            - --{{ $key }}={{ $value }}
+          {{- end }}
+          {{- if and $metaClientURL (not (hasKey $storageArgs "meta.addr")) }}
+            - {{ printf "%s=%s" "--meta.addr" $metaClientURL | quote }}
+          {{- end }}
+          {{- if not (hasKey $storageArgs "meta.cluster") }}
+            - {{ printf "%s=%s" "--meta.cluster" (.Values.guance_meta.cluster | default "default") | quote }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 8482
+            - name: guance-insert
+              containerPort: 8400
+            - name: guance-select
+              containerPort: 8401
+          env:
+            - name: HOST_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+          {{- with .Values.guance_storage.env }}
+            {{ toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $.Values.guance_storage.probe.liveness }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $.Values.guance_storage.probe.readiness }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources: {{ toYaml .Values.guance_storage.resources | nindent 12 }}
+          volumeMounts:
+            - name: guance-storage-volume
+              mountPath: {{ .Values.guance_storage.persistentVolume.mountPath }}
+              subPath: {{ .Values.guance_storage.persistentVolume.subPath }}
+          {{- range .Values.guance_storage.extraHostPathMounts }}
+            - name: {{ .name }}
+              mountPath: {{ .mountPath }}
+              subPath: {{ .subPath }}
+              readOnly: {{ .readOnly }}
+          {{- end }}
+          {{- range .Values.guance_storage.extraConfigmapMounts }}
+            - name: {{ $.Values.guance_storage.name }}-{{ .name }}
+              mountPath: {{ .mountPath }}
+              subPath: {{ .subPath }}
+              readOnly: {{ .readOnly }}
+          {{- end }}
+          {{- range .Values.guance_storage.extraSecretMounts }}
+            - name: {{ .name }}
+              mountPath: {{ .mountPath }}
+              subPath: {{ .subPath }}
+              readOnly: {{ .readOnly }}
+          {{- end }}
+          {{- with .Values.guance_storage.extraVolumeMounts }}
+          {{- toYaml . | nindent 12 }}
+          {{- end }}
+    {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+       {{ toYaml .Values.imagePullSecrets | indent 2 }}
+    {{- end }}
+    {{- with .Values.guance_storage.nodeSelector | default .Values.nodeSelector }}
+      nodeSelector:
+{{ toYaml . | indent 8 }}
+    {{- end }}
+    {{- if .Values.guance_storage.securityContext }}
+      securityContext:
+{{ toYaml .Values.guance_storage.securityContext | indent 8 }}
+    {{- end }}
+      serviceAccountName: {{ template "guancedb.serviceAccountName" . }}
+    {{- with .Values.guance_storage.tolerations | default .Values.tolerations }}
+      tolerations:
+{{ toYaml . | indent 8 }}
+    {{- end }}
+    {{- if .Values.guance_storage.affinity }}
+      affinity:
+{{ toYaml .Values.guance_storage.affinity | indent 8 }}
+    {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.guance_storage.terminationGracePeriodSeconds }}
+      volumes:
+        {{- with .Values.guance_storage.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if not .Values.guance_storage.persistentVolume.enabled }}
+        - name: guance-storage-volume
+          emptyDir: {}
+        {{- else }}
+        {{- if .Values.guance_storage.persistentVolume.existingClaim }}
+        - name: guance-storage-volume
+          persistentVolumeClaim:
+            claimName: {{ .Values.guance_storage.persistentVolume.existingClaim }}
+        {{- end }}
+        {{- end }}
+  {{- if and .Values.guance_storage.persistentVolume.enabled (not .Values.guance_storage.persistentVolume.existingClaim) }}
+  volumeClaimTemplates:
+    - metadata:
+        name: guance-storage-volume
+        {{- if .Values.guance_storage.persistentVolume.annotations }}
+        annotations:
+{{ toYaml .Values.guance_storage.persistentVolume.annotations | indent 10 }}
+        {{- end }}
+        {{- if .Values.guance_storage.persistentVolume.labels }}
+        labels:
+{{ toYaml .Values.guance_storage.persistentVolume.labels | indent 10 }}
+        {{- end }}
+      spec:
+        accessModes:
+{{ toYaml .Values.guance_storage.persistentVolume.accessModes | indent 10 }}
+        resources:
+          requests:
+            storage: "{{ .Values.guance_storage.persistentVolume.size }}"
+      {{ $storageClass := (or .Values.guance_storage.persistentVolume.storageClass .Values.global.storageClass) }}
+      {{- if $storageClass }}
+      {{- if (eq "-" $storageClass) }}
+        storageClassName: ""
+      {{- else }}
+        storageClassName: "{{ $storageClass }}"
+      {{- end }}
+      {{- end }}
+{{- end }}
+{{- end }}

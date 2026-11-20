@@ -1,0 +1,24 @@
+{{- if .Values.guance_throttler.enabled }}
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: {{ template "guancedb.fullname" . }}-rolebinding
+  namespace: {{ .Release.Namespace }}
+  labels:
+  {{- include "guancedb.common.metaLabels" . | nindent 4 }}
+  {{- if .Values.rbac.extraLabels }}
+{{ toYaml .Values.rbac.extraLabels | indent 4}}
+  {{- end }}
+{{- with .Values.rbac.annotations }}
+  annotations:
+{{ toYaml . | indent 4 }}
+{{- end }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ template "guancedb.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ template "guancedb.fullname" . }}-role
+  apiGroup: rbac.authorization.k8s.io
+{{- end -}}

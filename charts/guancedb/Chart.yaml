@@ -1,0 +1,13 @@
+apiVersion: v2
+appVersion: v1.58.5
+dependencies:
+- condition: scopedb.enabled
+  name: scopedb
+  repository: file://charts/scopedb
+  version: 0.1.0
+description: GuanceDB
+icon: https://guance.com/images/footer/logo.png
+name: guancedb
+sources:
+- https://pubrepo.jiagouyun.com/chartrepo/guancedb
+version: 1.2.1-helm4.1

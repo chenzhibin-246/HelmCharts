@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "scopedb.fullname" $ }}
+  labels:
+    {{- include "scopedb.labels" $ | nindent 4 }}
+spec:
+  type: {{ $.Values.service.type }}
+  clusterIP: {{ $.Values.service.clusterIP }}
+  ports:
+    - port: {{ $.Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+      nodePort: {{ $.Values.service.nodePort }}
+  selector:
+    {{- include "scopedb.selectorLabels" $ | nindent 4 }}
+    {{- if include "scopedb.hasServiceExclusion" $ }}
+    scopedb.io/service-member: "true"
+    {{- end }}
+{{ range .Values.nodegroups }}
+  {{- $enableDiskCacheRecovery := and .diskCache .diskCache.enabled .diskCache.enableRecovery }}
+  {{- /* dedicatedService is true or a map of type/port/nodePort/clusterIP/annotations */}}
+  {{- $svc := ternary .dedicatedService dict (kindIs "map" .dedicatedService) }}
+  {{ if or (eq .name "query") (eq .name "large-query") $enableDiskCacheRecovery .dedicatedService }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "scopedb.fullname" $ }}-{{ .name }}
+  labels:
+    {{- include "scopedb.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ include "scopedb.fullname" $ }}-{{ .name }}
+  {{- with $svc.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ $svc.type | default "ClusterIP" }}
+  {{- /* headless unless clusterIP is set explicitly ("" lets Kubernetes allocate one) */}}
+  clusterIP: {{ ternary $svc.clusterIP "None" (hasKey $svc "clusterIP") | quote }}
+  ports:
+    - port: {{ $svc.port | default $.Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+      {{- with $svc.nodePort }}
+      nodePort: {{ . }}
+      {{- end }}
+  selector:
+    {{- include "scopedb.selectorLabels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ include "scopedb.fullname" $ }}-{{ .name }}
+  {{ end }}
+{{ end }}

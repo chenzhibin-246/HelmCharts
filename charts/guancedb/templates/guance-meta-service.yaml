@@ -1,0 +1,47 @@
+{{- if .Values.guance_meta.enabled -}}
+apiVersion: v1
+kind: Service
+metadata:
+{{- if .Values.guance_meta.service.annotations }}
+  annotations:
+{{ toYaml .Values.guance_meta.service.annotations | indent 4}}
+{{- end }}
+  labels:
+    {{- include "guancedb.guance_meta.labels" . | nindent 4 }}
+{{- if .Values.guance_meta.service.labels }}
+{{ toYaml .Values.guance_meta.service.labels | indent 4}}
+{{- end }}
+  name: {{ template "guancedb.guance_meta.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+{{- if .Values.guance_meta.service.clusterIP }}
+  clusterIP: {{ .Values.guance_meta.service.clusterIP }}
+{{- end }}
+{{- if .Values.guance_meta.service.externalIPs }}
+  externalIPs:
+{{ toYaml .Values.guance_meta.service.externalIPs | indent 4 }}
+{{- end }}
+{{- if .Values.guance_meta.service.loadBalancerIP }}
+  loadBalancerIP: {{ .Values.guance_meta.service.loadBalancerIP }}
+{{- end }}
+{{- if .Values.guance_meta.service.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+  {{- range $cidr := .Values.guance_meta.service.loadBalancerSourceRanges }}
+    - {{ $cidr }}
+  {{- end }}
+{{- end }}
+  ports:
+    - name: http
+      port: {{ .Values.guance_meta.service.servicePort }}
+      protocol: TCP
+      targetPort: {{ .Values.guance_meta.service.targetPort }}
+  {{- range .Values.guance_meta.service.extraPorts }}
+    - name: {{ .name }}
+      port: {{ .port }}
+      protocol: TCP
+      targetPort: {{ .targetPort }}
+  {{- end }}
+  selector:
+    {{- include "guancedb.guance_meta.matchLabels" . | nindent 4 }}
+  type: "{{ .Values.guance_meta.service.type }}"
+{{- end }}

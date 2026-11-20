@@ -1,0 +1,211 @@
+# GuanceDB logs business profile with ScopeDB.
+# Install this profile first when the metrics profile reuses its guance-meta.
+# Replace placeholder endpoints and create guance-meta-secret before installation.
+
+guance_storage:
+  enabled: false
+
+streamAggr:
+  enabled: true
+
+global:
+  storageClass: ebs-sc
+
+nodeSelector:
+  nodepool: guancedb4scopedb
+
+tolerations:
+  - effect: NoSchedule
+    key: nodepool
+    operator: Equal
+    value: guancedb4scopedb
+
+timeIndex:
+  enabled: true
+  path: /data/time-index
+
+imagePullSecrets: []
+
+guance_meta:
+  enabled: true
+  cluster: logs
+  mysql:
+    addr: "<MYSQL_HOST>:3306"
+    database: guance_meta
+  kodo:
+    endpoint: "http://kodo-inner.forethought-kodo:9527"
+  secret:
+    name: guance-meta-secret
+
+guance_insert:
+  replicaCount: 3
+  persistentVolume:
+    size: 200Gi
+    fileQueue:
+      enabled: false
+      # The queue shares /data with stream-aggr in this profile.
+      acknowledgeSharedVolumePerformanceDowngrade: true
+  resources:
+    limits:
+      cpu: "8"
+      memory: 16Gi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  extraArgs:
+    fileQueue.maxTotalSize: "10737418240"
+
+guance_select:
+  tenancy: dedicated
+  queryQueue:
+    enabled: false
+  replicaCount: 3
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  env:
+    - name: POD_NAME
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: metadata.name
+    - name: OTEL_RESOURCE_ATTRIBUTES
+      value: pod_name=$(POD_NAME)
+  extraArgs:
+    envflag.enable: true
+    http.disableResponseCompression: true
+    loggerFormat: json
+    loggerMaxArgLen: 10000
+    loggerTimezone: Asia/Shanghai
+    search.denyPartialResponse: true
+    search.maxQueryDuration: 110s
+    storageNode: 172.31.59.19:8401,172.31.51.113:8401
+    scopeDB.nodegroup.archiveQuery: large-query
+    scopeDB.nodegroup.query: large-query
+    scopeDB.nodegroup.largeQuery: ""
+
+scopedb:
+  enabled: true
+  metaUpgrade:
+    disable: true
+  imagePullSecrets: []
+  env:
+    - name: OTEL_RESOURCE_ATTRIBUTES
+      value: pod_name=$(POD_NAME)
+  otlpHost: "xxx"
+  nodeSelector:
+    nodepool: scopedb
+  tolerations:
+    - effect: NoSchedule
+      key: nodepool
+      operator: Equal
+      value: scopedb
+  nodegroups:
+    - name: query-meta
+      replicaCount: 1
+      resources:
+        limits:
+          cpu: "4"
+          memory: 8Gi
+        requests:
+          cpu: 100m
+          memory: 128Mi
+    - name: ingest-meta
+      replicaCount: 1
+      resources:
+        limits:
+          cpu: "4"
+          memory: 8Gi
+        requests:
+          cpu: 100m
+          memory: 128Mi
+    - name: ingest
+      replicaCount: 2
+      resources:
+        limits:
+          cpu: "16"
+          memory: 16Gi
+        requests:
+          cpu: "14"
+          memory: 128Mi
+      nodeSelector:
+        nodepool: scopedb-ingest
+      tolerations:
+        - effect: NoSchedule
+          key: nodepool
+          operator: Equal
+          value: scopedb-ingest
+    - name: system-query
+      replicaCount: 1
+      resources:
+        limits:
+          cpu: "4"
+          memory: 16Gi
+        requests:
+          cpu: 100m
+          memory: 128Mi
+      nodeSelector:
+        nodepool: scopedb-system-query
+      tolerations:
+        - effect: NoSchedule
+          key: nodepool
+          operator: Equal
+          value: scopedb-system-query
+    - name: large-query
+      replicaCount: 1
+      resources:
+        limits:
+          cpu: "16"
+          memory: 64Gi
+        requests:
+          cpu: 100m
+          memory: 128Mi
+      nodeSelector:
+        nodepool: scopedb-large-query
+      tolerations:
+        - effect: NoSchedule
+          key: nodepool
+          operator: Equal
+          value: scopedb-large-query
+    - name: job
+      replicaCount: 1
+      resources:
+        limits:
+          cpu: "8"
+          memory: 32Gi
+        requests:
+          cpu: 100m
+          memory: 128Mi
+      nodeSelector:
+        nodepool: scopedb-job
+      tolerations:
+        - effect: NoSchedule
+          key: nodepool
+          operator: Equal
+          value: scopedb-job
+    - name: rollover-job
+      replicaCount: 1
+      resources:
+        limits:
+          cpu: "8"
+          memory: 32Gi
+        requests:
+          cpu: 100m
+          memory: 128Mi
+      diskSpill:
+        enabled: true
+        diskBudgetGi: 500
+        storageClass: csi-disk-ssd-delete
+      nodeSelector:
+        nodepool: scopedb-rollover-job
+      tolerations:
+        - effect: NoSchedule
+          key: nodepool
+          operator: Equal
+          value: scopedb-rollover-job
+  s3:
+    bucket: scopedb-prod
+    endpoint: http://xxx.amazonaws.com
+    region: xxx
+    virtualHostStyle: true

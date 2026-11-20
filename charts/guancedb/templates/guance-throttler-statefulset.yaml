@@ -1,0 +1,181 @@
+{{- if .Values.guance_throttler.enabled -}}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  namespace: {{ .Release.Namespace }}
+{{- if .Values.guance_throttler.annotations }}
+  annotations:
+{{ toYaml .Values.guance_throttler.annotations | indent 4 }}
+{{- end }}
+  labels:
+    {{- include "guancedb.guance_throttler.labels" . | nindent 4 }}
+    {{- with .Values.guance_throttler.extraLabels }}
+    {{ toYaml .}}
+    {{- end}}
+  name: {{ template "guancedb.guance_throttler.fullname" . }}
+spec:
+  serviceName: {{ template "guancedb.guance_throttler.fullname" . }}
+  selector:
+    matchLabels:
+      {{- include "guancedb.guance_throttler.matchLabels" . | nindent 6 }}
+  replicas: {{ .Values.guance_throttler.replicaCount }}
+  podManagementPolicy: {{ .Values.guance_throttler.podManagementPolicy }}
+  template:
+    metadata:
+    {{- if .Values.guance_throttler.podAnnotations }}
+      annotations:
+{{ toYaml .Values.guance_throttler.podAnnotations | indent 8 }}
+    {{- end }}
+      labels:
+        {{- include "guancedb.guance_throttler.labels" . | nindent 8 }}
+{{- with .Values.guance_throttler.extraLabels }}
+{{ toYaml . | indent 8 }}
+{{- end }}
+    spec:
+{{- if .Values.guance_throttler.priorityClassName }}
+      priorityClassName: "{{ .Values.guance_throttler.priorityClassName }}"
+{{- end }}
+{{- if .Values.guance_throttler.schedulerName }}
+      schedulerName: "{{ .Values.guance_throttler.schedulerName }}"
+{{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountToken }}
+      {{- if eq (include "guancedb.guance_throttler.hasInitContainer" . ) "true" }}
+      initContainers:
+        {{- include "guancedb.guance_throttler.initContiners" . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ template "guancedb.name" . }}-{{ .Values.guance_throttler.name }}
+          {{- with  .Values.guance_throttler.securityContext }}
+          securityContext: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          image: "{{ .Values.guance_throttler.image.repository }}:{{ required "image tag must be set" .Values.guance_throttler.image.tag }}"
+          imagePullPolicy: "{{ .Values.guance_throttler.image.pullPolicy }}"
+          {{- if .Values.guance_throttler.containerWorkingDir }}
+          workingDir: {{ .Values.guance_throttler.containerWorkingDir }}
+          {{- end }}
+          args:
+            - {{ printf "%s=%s" "--retentionPeriod" (toString .Values.guance_throttler.retentionPeriod) | quote}}
+            - {{ printf "%s=%s" "--storageDataPath" .Values.guance_throttler.persistentVolume.mountPath | quote}}
+          {{- if .Values.guance_throttler.scrape.enabled }}
+            - --promscrape.config=/scrapeconfig/scrape.yml
+          {{- end }}
+          {{- range $key, $value := .Values.guance_throttler.extraArgs }}
+            - --{{ $key }}={{ $value }}
+          {{- end }}
+          {{- with .Values.guance_throttler.env }}
+          env: {{ toYaml . | nindent 10 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 8428
+          {{- with $.Values.guance_throttler.probe.liveness }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $.Values.guance_throttler.probe.readiness }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.guance_throttler.resources | nindent 12 }}
+          volumeMounts:
+            - name: guance-throttler-volume
+              mountPath: {{ .Values.guance_throttler.persistentVolume.mountPath }}
+              subPath: {{ .Values.guance_throttler.persistentVolume.subPath }}
+          {{- if .Values.guance_throttler.scrape.enabled }}
+            - name: scrapeconfig
+              mountPath: /scrapeconfig
+          {{- end }}
+          {{- range .Values.guance_throttler.extraHostPathMounts }}
+            - name: {{ .name }}
+              mountPath: {{ .mountPath }}
+              subPath: {{ .subPath }}
+              readOnly: {{ .readOnly }}
+          {{- end }}
+          {{- range .Values.guance_throttler.extraConfigmapMounts }}
+            - name: {{ $.Values.guance_throttler.name }}-{{ .name }}
+              mountPath: {{ .mountPath }}
+              subPath: {{ .subPath }}
+              readOnly: {{ .readOnly }}
+          {{- end }}
+          {{- range .Values.guance_throttler.extraSecretMounts }}
+            - name: {{ .name }}
+              mountPath: {{ .mountPath }}
+              subPath: {{ .subPath }}
+              readOnly: {{ .readOnly }}
+          {{- end }}
+          {{- with .Values.guance_throttler.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.guance_throttler.extraContainers }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+       {{ toYaml .Values.imagePullSecrets | indent 2 }}
+    {{- end }}
+    {{- with .Values.guance_throttler.nodeSelector | default .Values.nodeSelector }}
+      nodeSelector:
+{{ toYaml . | indent 8 }}
+    {{- end }}
+    {{- if .Values.guance_throttler.podSecurityContext }}
+      securityContext:
+{{ toYaml .Values.guance_throttler.podSecurityContext | indent 8 }}
+    {{- end }}
+      serviceAccountName: {{ template "guancedb.serviceAccountName" . }}
+    {{- with .Values.guance_throttler.tolerations | default .Values.tolerations }}
+      tolerations:
+{{ toYaml . | indent 8 }}
+    {{- end }}
+    {{- with .Values.guance_throttler.affinity }}
+      affinity: {{ toYaml . | nindent 8 }}
+    {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.guance_throttler.terminationGracePeriodSeconds }}
+      volumes:
+        {{- if .Values.guance_throttler.scrape.enabled }}
+        - name: scrapeconfig
+          configMap:
+            name: {{ template "guancedb.fullname" . }}-scrapeconfig
+        {{- end }}
+        {{- if not .Values.guance_throttler.persistentVolume.enabled }}
+        - name: guance-throttler-volume
+          emptyDir: {}
+        {{- else }}
+        {{- if .Values.guance_throttler.persistentVolume.existingClaim }}
+        - name: guance-throttler-volume
+          persistentVolumeClaim:
+            claimName: {{ .Values.guance_throttler.persistentVolume.existingClaim }}
+        {{- end }}
+        {{- end }}
+        {{- with .Values.guance_throttler.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+  {{- if and .Values.guance_throttler.persistentVolume.enabled (not .Values.guance_throttler.persistentVolume.existingClaim) }}
+  volumeClaimTemplates:
+    - metadata:
+        name: guance-throttler-volume
+        {{- if .Values.guance_throttler.persistentVolume.annotations }}
+        annotations:
+{{ toYaml .Values.guance_throttler.persistentVolume.annotations | indent 10 }}
+        {{- end }}
+      spec:
+        accessModes:
+{{ toYaml .Values.guance_throttler.persistentVolume.accessModes | indent 10 }}
+        resources:
+          requests:
+            storage: "{{ .Values.guance_throttler.persistentVolume.size }}"
+      {{ $storageClass := (or .Values.guance_throttler.persistentVolume.storageClass .Values.global.storageClass) }}
+      {{- if $storageClass }}
+      {{- if (eq "-" $storageClass) }}
+        storageClassName: ""
+      {{- else }}
+        storageClassName: "{{ $storageClass }}"
+      {{- end }}
+      {{- end }}
+      {{- with .Values.guance_throttler.persistentVolume.matchLabels }}
+        selector:
+          matchLabels:
+            {{- toYaml . | nindent 12 }}
+      {{- end }}
+{{- end }}
+{{- end }}

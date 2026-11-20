@@ -1,0 +1,159 @@
+{{- $metaClientURL := include "guancedb.guance_meta.clientURL" . -}}
+{{- if .Values.guance_meta.enabled -}}
+{{- $metadataSecretName := include "guancedb.guance_meta.secretName" . -}}
+{{- $reservedArgs := list "mysql.addr" "mysql.database" "mysql.username" "mysql.password" "kodo.endpoint" "ui.enabled" "meta.cluster" -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+{{- with .Values.guance_meta.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+{{- end }}
+  labels:
+    {{- include "guancedb.guance_meta.labels" . | nindent 4 }}
+{{- with .Values.guance_meta.extraLabels }}
+{{ toYaml . | indent 4 }}
+{{- end }}
+  name: {{ template "guancedb.guance_meta.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "guancedb.guance_meta.matchLabels" . | nindent 6 }}
+  replicas: {{ .Values.guance_meta.replicaCount }}
+  template:
+    metadata:
+      annotations:
+        {{ if .Values.alwaysRoll }}always-roll: {{ randAlpha 4 | quote }}{{ end }}
+        {{ include "guancedb.datakitAnnotation" "8483" | nindent 8 }}
+      {{- with .Values.guance_meta.podAnnotations }}
+{{ toYaml . | indent 8 }}
+      {{- end }}
+      labels:
+        {{- include "guancedb.guance_meta.labels" . | nindent 8 }}
+{{- with .Values.guance_meta.extraLabels }}
+{{ toYaml . | indent 8 }}
+{{- end }}
+    spec:
+      {{- if .Values.guance_meta.priorityClassName }}
+      priorityClassName: "{{ .Values.guance_meta.priorityClassName }}"
+      {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountToken }}
+      {{- with .Values.guance_meta.initContainers }}
+      initContainers:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ template "guancedb.name" . }}-{{ .Values.guance_meta.name }}
+          image: "{{ if .Values.image.registry }}{{ .Values.image.registry }}/guancedb/guance-meta{{ else }}{{ .Values.guance_meta.image.repository }}{{ end }}:{{ required "image tag must be set" (.Values.guance_meta.image.tag | default .Values.image.tag | default .Chart.AppVersion) }}"
+          imagePullPolicy: "{{ or .Values.image.pullPolicy .Values.guance_meta.image.pullPolicy }}"
+          {{- if .Values.guance_meta.containerWorkingDir }}
+          workingDir: {{ .Values.guance_meta.containerWorkingDir }}
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.guance_meta.podSecurityContext | nindent 12 }}
+          args:
+          {{- range $key, $value := .Values.guance_meta.extraArgs }}
+            {{- if has $key $reservedArgs }}
+              {{- if eq $key "meta.cluster" }}
+                {{- fail "guance_meta.extraArgs[meta.cluster] should not be set manually; use guance_meta.cluster instead" }}
+              {{- else }}
+                {{- fail (printf "guance_meta.extraArgs[%s] should not be set manually; use the structured guance_meta.mysql/guance_meta.kodo/guance_meta.secret config instead" $key) }}
+              {{- end }}
+            {{- end }}
+            {{- $valueToRender := $value }}
+            {{- if or (kindIs "float64" $value) (kindIs "float32" $value) }}
+              {{- if eq $value (floor $value) }}
+                {{- $valueToRender = printf "%.0f" $value }}
+              {{- end }}
+            {{- end }}
+            - --{{ $key }}={{ $valueToRender }}
+          {{- end }}
+            - {{ printf "%s=%s" "--mysql.addr" (required "guance_meta.mysql.addr must be set when guance_meta.enabled=true" .Values.guance_meta.mysql.addr) | quote }}
+            - {{ printf "%s=%s" "--mysql.database" .Values.guance_meta.mysql.database | quote }}
+            - {{ printf "%s=%s" "--kodo.endpoint" (required "guance_meta.kodo.endpoint must be set when guance_meta.enabled=true" .Values.guance_meta.kodo.endpoint) | quote }}
+            - {{ printf "%s=%v" "--ui.enabled" .Values.guance_meta.ui.enabled | quote }}
+            - {{ printf "%s=%s" "--meta.cluster" (.Values.guance_meta.cluster | default "default") | quote }}
+          env:
+            - name: TZ
+              value: {{ .Values.guance_meta.timezone | quote }}
+            - name: HOST_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: mysql_username
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $metadataSecretName }}
+                  key: metadataMySQLUsername
+            - name: mysql_password
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $metadataSecretName }}
+                  key: metadataMySQLPassword
+          {{- with .Values.guance_meta.env }}
+          {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 8483
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: {{ .Values.guance_meta.probe.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.guance_meta.probe.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.guance_meta.probe.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.guance_meta.probe.readiness.failureThreshold }}
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: {{ .Values.guance_meta.probe.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.guance_meta.probe.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.guance_meta.probe.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.guance_meta.probe.liveness.failureThreshold }}
+          {{- if .Values.guance_meta.extraVolumeMounts }}
+          volumeMounts:
+          {{- with .Values.guance_meta.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- end }}
+          resources:
+            {{- with .Values.guance_meta.resources }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+        {{- with .Values.guance_meta.extraContainers }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+      {{ toYaml .Values.imagePullSecrets | indent 2 }}
+    {{- end }}
+    {{- with .Values.guance_meta.nodeSelector | default .Values.nodeSelector }}
+      nodeSelector:
+{{ toYaml . | indent 8 }}
+    {{- end }}
+    {{- if .Values.guance_meta.securityContext }}
+      securityContext:
+{{ toYaml .Values.guance_meta.securityContext | indent 8 }}
+    {{- end }}
+      serviceAccountName: {{ template "guancedb.serviceAccountName" . }}
+    {{- with .Values.guance_meta.tolerations | default .Values.tolerations }}
+      tolerations:
+{{ toYaml . | indent 8 }}
+    {{- end }}
+    {{- if .Values.guance_meta.affinity }}
+      affinity:
+{{ toYaml .Values.guance_meta.affinity | indent 8 }}
+    {{- end }}
+    {{- if .Values.guance_meta.topologySpreadConstraints }}
+      topologySpreadConstraints:
+{{ toYaml .Values.guance_meta.topologySpreadConstraints | indent 8 }}
+    {{- end }}
+    {{- if .Values.guance_meta.extraVolumes }}
+      volumes:
+        {{- with .Values.guance_meta.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    {{- end }}
+{{- end }}

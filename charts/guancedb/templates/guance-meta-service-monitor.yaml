@@ -1,0 +1,44 @@
+{{- if and .Values.guance_meta.enabled .Values.guance_meta.serviceMonitor.enabled -}}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  {{- if .Values.guance_meta.serviceMonitor.annotations }}
+  annotations:
+{{ toYaml .Values.guance_meta.serviceMonitor.annotations | indent 4 }}
+  {{- end }}
+  labels:
+  {{- include "guancedb.guance_meta.labels" . | nindent 4 }}
+  {{- if .Values.guance_meta.serviceMonitor.extraLabels }}
+{{ toYaml .Values.guance_meta.serviceMonitor.extraLabels | indent 4 }}
+  {{- end }}
+  name: {{ template "guancedb.guance_meta.fullname" . }}
+  {{- if .Values.guance_meta.serviceMonitor.namespace }}
+  namespace: {{ .Values.guance_meta.serviceMonitor.namespace }}
+  {{- end }}
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      {{- include "guancedb.guance_meta.matchLabels" . | nindent 6 }}
+  endpoints:
+    - port: http
+      {{- if .Values.guance_meta.serviceMonitor.scheme }}
+      scheme: {{ .Values.guance_meta.serviceMonitor.scheme }}
+      {{- end }}
+      {{- if .Values.guance_meta.serviceMonitor.interval }}
+      interval: {{ .Values.guance_meta.serviceMonitor.interval }}
+      {{- end }}
+      {{- if .Values.guance_meta.serviceMonitor.scrapeTimeout }}
+      scrapeTimeout: {{ .Values.guance_meta.serviceMonitor.scrapeTimeout }}
+      {{- end }}
+      {{- with .Values.guance_meta.serviceMonitor.tlsConfig }}
+      tlsConfig:
+          {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.guance_meta.serviceMonitor.relabelings }}
+      relabelings:
+          {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

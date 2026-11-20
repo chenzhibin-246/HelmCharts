@@ -1,0 +1,71 @@
+{{- if .Values.scopeql.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "scopeql.fullname" $ }}
+  labels:
+    {{- include "scopeql.labels" $ | nindent 4 }}
+{{- with .extraLabels }}
+{{ toYaml . | indent 4 }}
+{{- end }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "scopeql.selectorLabels" $ | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        datakit/logs: '[{"disable":true}]'
+      labels:
+        {{- include "scopeql.labels" $ | nindent 8 }}
+    spec:
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: scopeql
+          command:
+            - sleep
+          args:
+            - infinity
+          env:
+            {{- $hasQuery := false }}
+            {{- $hasLargeQuery := false}}
+            {{- range .Values.nodegroups }}
+              {{- if or (eq .name "query") (eq .name "large-query") }}
+            - name: SCOPEQL_CONFIG_CONNECTIONS_{{ upper .name | replace "-" "_" }}_ENDPOINT
+              value: http://{{ include "scopedb.fullname" $ }}-{{ .name }}:6543
+            - name: SCOPEQL_CONFIG_CONNECTIONS_{{ upper .name | replace "-" "_" }}_AUTH
+              value: direct
+            - name: SCOPEQL_CONFIG_CONNECTIONS_{{ upper .name | replace "-" "_" }}_HEADERS
+              value: X-ScopeDB-Tenant-Id:__system__
+              {{- end }}
+              {{- if eq .name "query" }}{{ $hasQuery = true }}{{ end -}}
+              {{- if eq .name "large-query" }}{{ $hasLargeQuery = true }}{{ end -}}
+            {{- end }}
+            {{- if $hasQuery }}
+            - name: SCOPEQL_CONFIG_DEFAULT_CONNECTION
+              value: query
+            {{- else if $hasLargeQuery }}
+            - name: SCOPEQL_CONFIG_DEFAULT_CONNECTION
+              value: large_query
+            {{- end }}
+          image: "{{ .Values.scopeql.image.repository }}:{{ .Values.scopeql.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          resources:
+            {{- toYaml .Values.scopeql.resources | nindent 12 }}
+      {{- with .Values.scopeql.nodeSelector | default .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.scopeql.affinity | default .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.scopeql.tolerations | default .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

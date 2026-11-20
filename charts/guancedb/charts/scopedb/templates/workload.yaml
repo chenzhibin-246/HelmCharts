@@ -1,0 +1,250 @@
+{{ range .Values.nodegroups }}
+{{- range $diskType, $disk := pick . "diskCache" "diskSpill" }}
+{{- if and $disk (hasKey $disk "sizeGi") }}
+{{- fail (printf "%s.sizeGi has been renamed to %s.diskBudgetGi; update your values file to specify the disk budget allocated to this feature in GiB" $diskType $diskType) }}
+{{- end }}
+{{- end }}
+{{- $enableDiskCacheRecovery := and .diskCache .diskCache.enabled .diskCache.enableRecovery }}
+apiVersion: apps/v1
+{{- if $enableDiskCacheRecovery }}
+kind: StatefulSet
+{{- else }}
+kind: Deployment
+{{- end }}
+metadata:
+  name: {{ include "scopedb.fullname" $ }}-{{ .name }}
+  labels:
+    {{- include "scopedb.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ include "scopedb.fullname" $ }}-{{ .name }}
+{{- with .extraLabels }}
+{{ toYaml . | indent 4 }}
+{{- end }}
+spec:
+  {{- if $enableDiskCacheRecovery }}
+  serviceName: {{ include "scopedb.fullname" $ }}-{{ .name }}
+  {{- else }}
+  strategy:
+    {{- if and .diskCache .diskCache.enabled }}
+    rollingUpdate:
+      maxSurge: 0
+    {{- else }}
+    {{- with .strategy | default $.Values.strategy }}
+      {{ toYaml . | nindent 6 }}
+    {{- end }}
+    {{- end }}
+  {{- end }}
+  {{- if .replicasManagedExternally }}
+  {{/* replicas is owned by an external controller (operator, kubectl scale). Start at 0 only while the workload does not exist yet
+       (lookup is empty on template/dry-run), so later upgrades never reset it. */}}
+  {{- if not (lookup "apps/v1" (ternary "StatefulSet" "Deployment" (not (not $enableDiskCacheRecovery))) $.Release.Namespace (printf "%s-%s" (include "scopedb.fullname" $) .name)) }}
+  replicas: 0
+  {{- end }}
+  {{- else if and .autoscaling .autoscaling.enabled }}
+  {{/*  HPA will not scale from 0 replicas*/}}
+  replicas: {{ .autoscaling.minReplicas }}
+  {{- else if and (or (eq .name "ingest-meta") (eq .name "query-meta")) (gt (.replicaCount | default 1.) 1.) }}
+    {{ fail "ingest-meta and query-meta must have only 1 replica" }}
+  {{- else }}
+  replicas: {{ .replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "scopedb.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: {{ include "scopedb.fullname" $ }}-{{ .name }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") $ | sha256sum }}
+        datakit/logs: '[{"disable":true}]'
+      {{- with .podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "scopedb.labels" $ | nindent 8 }}
+        app.kubernetes.io/component: {{ include "scopedb.fullname" $ }}-{{ .name }}
+        {{- if include "scopedb.hasServiceExclusion" $ }}
+        {{- if not .dedicatedService }}
+        scopedb.io/service-member: "true"
+        {{- end }}
+        {{- end }}
+        {{- /* nodegroup podLabels replace the global ones */}}
+        {{- with or .podLabels $.Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "scopedb.serviceAccountName" $ }}
+      securityContext:
+        {{- toYaml $.Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ $.Chart.Name }}
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: HOST_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            {{ with .otlpHost | default $.Values.otlpHost }}
+            - name: OTLP_HOST
+              value: {{ . }}
+            {{ end }}
+          {{- range $i, $env :=  $.Values.env }}
+            - name: {{ $env.name }}
+              value: {{ $env.value | quote }}
+          {{- end }}
+          {{- range $i, $env := .env }}
+            - name: {{ $env.name }}
+              value: {{ $env.value | quote }}
+          {{- end }}
+          envFrom:
+            - secretRef:
+                name: {{ include "scopedb.fullname" $ }}
+              prefix: SCOPEDB_CONFIG_
+          command:
+            - /bin/sh
+            - -c
+          args:
+            - SCOPEDB_CONFIG_SERVER_HTTP_ADVERTISE_ADDR=${POD_IP}:6543
+              SCOPEDB_CONFIG_SERVER_INTERNAL_ADVERTISE_ADDR=${POD_IP}:6789
+              SCOPEDB_CONFIG_TELEMETRY_LOGS_OPENTELEMETRY_OTLP_ENDPOINT=http://${OTLP_HOST:-${HOST_IP}}:4317
+              SCOPEDB_CONFIG_TELEMETRY_TRACES_OPENTELEMETRY_OTLP_ENDPOINT=http://${OTLP_HOST:-${HOST_IP}}:4317
+              SCOPEDB_CONFIG_TELEMETRY_METRICS_OPENTELEMETRY_OTLP_ENDPOINT=http://${OTLP_HOST:-${HOST_IP}}:4317
+              {{- if .ioDepthFactor }}
+              SCOPEDB_CONFIG_RUNTIME_STORAGE_IO_QUEUE_DEPTH={{ mul (.resources.limits.cpu | int) .ioDepthFactor }}
+              {{- end }}
+              {{- if and .diskCache .diskCache.enabled }}
+              SCOPEDB_CONFIG_EXPERIMENTAL_PREFETCH_CACHE=true
+              SCOPEDB_CONFIG_DISK_CACHE_DIR=/cache
+              SCOPEDB_CONFIG_DISK_CACHE_SIZE_LIMIT={{ printf "%.0f" (mulf 0.8 1024 1024 1024 (required ".diskCache.diskBudgetGi is required" .diskCache.diskBudgetGi)) }}
+              {{- if $enableDiskCacheRecovery }}
+              SCOPEDB_CONFIG_DISK_CACHE_RECOVERY=true
+              {{- end }}
+              {{- if .diskCache.enableIoUring }}
+              SCOPEDB_CONFIG_DISK_CACHE_ENABLE_IO_URING=true
+              {{- end }}
+              {{- if hasKey .diskCache "enableDirectIO" }}
+              SCOPEDB_CONFIG_DISK_CACHE_ENABLE_DIRECT_IO={{ .diskCache.enableDirectIO }}
+              {{- end }}
+              {{- end }}
+              {{- if and .diskSpill .diskSpill.enabled }}
+              SCOPEDB_CONFIG_DISK_SPILL_DIR=/spill
+              SCOPEDB_CONFIG_DISK_SPILL_SIZE_LIMIT={{ printf "%.0f" (mulf 0.8 1024 1024 1024 (required ".diskSpill.diskBudgetGi is required" .diskSpill.diskBudgetGi)) }}
+              {{- end }}
+              {{- if eq .name "job" }}
+              SCOPEDB_CONFIG_EXPERIMENTAL_AUTO_OPTIMIZE=true
+              {{- end }}
+              {{- if $.Values.enableCoreDump }}
+              sudo echo "/tmp/core.%e.%p" > /proc/sys/kernel/core_pattern &&
+              scopedb start --config-file /config/config.toml -n ${POD_NAME} {{ if ne .name "default" }}--create-nodegroup --join {{ .name }}{{ end }} ||
+              sleep 1000000
+              {{- else }}
+              exec scopedb start --config-file /config/config.toml -n ${POD_NAME} {{ if ne .name "default" }}--create-nodegroup --join {{ .name }}{{ end }}
+              {{- end }}
+          securityContext:
+            {{- toYaml $.Values.securityContext | nindent 12 }}
+          image: "{{ $.Values.image.repository }}:{{ (and .image .image.tag) | default $.Values.image.tag | default $.Chart.AppVersion }}"
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ $.Values.service.port }}
+              protocol: TCP
+          {{- if not $.Values.enableCoreDump }}
+          livenessProbe:
+            {{- with .probeInitialDelaySeconds }}
+            initialDelaySeconds: {{ . }}
+            {{- end }}
+            tcpSocket:
+              port: http
+          readinessProbe:
+            {{- with .probeInitialDelaySeconds }}
+            initialDelaySeconds: {{ . }}
+            {{- end }}
+            tcpSocket:
+              port: http
+          {{- end }}
+          {{- include "scopedb.validateCpuMemoryRatio" . }}
+          resources:
+            {{- toYaml .resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            {{ if and .diskCache .diskCache.enabled -}}
+            - name: cache
+              mountPath: /cache
+            {{ end -}}
+            {{ if and .diskSpill .diskSpill.enabled -}}
+            - name: spill
+              mountPath: /spill
+            {{ end -}}
+          {{- with $.Values.volumeMounts }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "scopedb.fullname" $ }}-config
+        {{ if and .diskCache .diskCache.enabled -}}
+        {{- /* Local volumes can only be used as a statically created PersistentVolume. Dynamic provisioning is not supported. */}}
+        - name: cache
+          hostPath:
+            path: {{ required ".diskCache.hostPath is required" .diskCache.hostPath }}
+            type: DirectoryOrCreate
+        {{ if and .diskSpill .diskSpill.enabled -}}
+        - name: spill
+          hostPath:
+            path: {{ required ".diskSpill.hostPath is required" .diskSpill.hostPath }}
+            type: DirectoryOrCreate
+        {{ end -}}
+        {{ else if and .diskSpill .diskSpill.enabled -}}
+        {{- if .diskSpill.hostPath -}}
+          {{ fail "disk spill should use volume claim when disk cache is not enabled" }}
+        {{- end -}}
+        - name: spill
+          ephemeral:
+            volumeClaimTemplate:
+              spec:
+                accessModes: [ "ReadWriteOnce" ]
+                storageClassName: {{ .diskSpill.storageClass | default $.Values.global.storageClass }}
+                resources:
+                  requests:
+                    storage: {{ .diskSpill.diskBudgetGi }}Gi
+        {{ end -}}
+      {{- with $.Values.volumes }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .nodeName }}
+      nodeName: {{ . }}
+      {{- end }}
+      {{- with or .nodeSelector (and (not .affinity) $.Values.nodeSelector) }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      affinity:
+        {{- if and .diskCache .diskCache.enabled }}
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: "kubernetes.io/hostname"
+              labelSelector:
+                matchLabels:
+                  {{- include "scopedb.selectorLabels" $ | nindent 18 }}
+                  app.kubernetes.io/component: {{ include "scopedb.fullname" $ }}-{{ .name }}
+        {{- end }}
+      {{- with or .affinity $.Values.affinity }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with or .tolerations $.Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+{{ end }}

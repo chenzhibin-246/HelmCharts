@@ -1,0 +1,53 @@
+{{- if .Values.guance_storage.enabled -}}
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+{{- if .Values.guance_storage.service.annotations }}
+{{ toYaml .Values.guance_storage.service.annotations | indent 4 }}
+{{- end }}
+{{- if not .Values.useDeprecatedDatakitAnnotation }}
+{{- include "guancedb.datakitAnnotations" "8482" | nindent 4 }}
+{{- end }}
+  labels:
+    {{- include "guancedb.guance_storage.labels" . | nindent 4 }}
+{{- if .Values.guance_storage.service.labels }}
+{{ toYaml .Values.guance_storage.service.labels | indent 4 }}
+{{- end }}
+  name: {{ template "guancedb.guance_storage.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  clusterIP: {{ .Values.guance_storage.service.clusterIP }}
+  publishNotReadyAddresses: {{ .Values.guance_storage.service.publishNotReadyAddresses }}
+  ports:
+    - port: {{ .Values.guance_storage.service.servicePort }}
+      targetPort: http
+      protocol: TCP
+      name: http
+      {{- with .Values.guance_storage.service.serviceNodePort }}
+      nodePort: {{ . }}
+      {{- end }}
+    - port: {{ .Values.guance_storage.service.selectPort }}
+      targetPort: guance-select
+      protocol: TCP
+      name: guance-select
+      {{- with .Values.guance_storage.service.selectNodePort }}
+      nodePort: {{ . }}
+      {{- end }}
+    - port: {{ .Values.guance_storage.service.insertPort }}
+      targetPort: guance-insert
+      protocol: TCP
+      name: guance-insert
+      {{- with .Values.guance_storage.service.insertNodePort }}
+      nodePort: {{ . }}
+      {{- end }}
+  {{- range .Values.guance_storage.service.extraPorts }}
+    - name: {{ .name }}
+      port: {{ .port }}
+      protocol: TCP
+      targetPort: {{ .targetPort }}
+  {{- end }}
+  selector:
+    {{- include "guancedb.guance_storage.matchLabels" . | nindent 4 }}
+  type: "{{ .Values.guance_storage.service.type }}"
+{{- end -}}

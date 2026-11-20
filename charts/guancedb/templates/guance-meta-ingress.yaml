@@ -1,0 +1,56 @@
+{{- if and .Values.guance_meta.enabled .Values.guance_meta.ingress.enabled -}}
+{{- $ingressApiIsStable := eq (include "guancedb.ingress.isStable" .) "true" -}}
+{{- $ingressSupportsIngressClassName := eq (include "guancedb.ingress.supportsIngressClassName" .) "true" -}}
+{{- $ingressSupportsPathType := eq (include "guancedb.ingress.supportsPathType" .) "true" -}}
+{{- if not $ingressSupportsPathType -}}
+{{- fail "guance_meta.ingress requires Kubernetes Ingress pathType support to avoid exposing metadata admin endpoints" -}}
+{{- end -}}
+apiVersion: {{ include "guancedb.ingress.apiVersion" . }}
+kind: Ingress
+metadata:
+{{- if .Values.guance_meta.ingress.annotations }}
+  annotations:
+{{ toYaml .Values.guance_meta.ingress.annotations | indent 4 }}
+{{- end }}
+  labels:
+    {{- include "guancedb.guance_meta.labels" . | nindent 4 }}
+  {{- if .Values.guance_meta.ingress.extraLabels }}
+{{ toYaml .Values.guance_meta.ingress.extraLabels | indent 4 }}
+  {{- end }}
+  name: {{ include "guancedb.guance_meta.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  {{- if and $ingressSupportsIngressClassName .Values.guance_meta.ingress.ingressClassName }}
+  ingressClassName: {{ .Values.guance_meta.ingress.ingressClassName }}
+  {{- end }}
+  rules:
+  {{- $metadataServiceName := include "guancedb.guance_meta.fullname" . }}
+  {{- $metadataServicePort := .Values.guance_meta.service.servicePort -}}
+  {{- $metadataIngressPaths := list (dict "path" "/" "pathType" "Exact") (dict "path" "/login" "pathType" "Prefix") (dict "path" "/config" "pathType" "Prefix") (dict "path" "/streamaggr" "pathType" "Prefix") (dict "path" "/assets" "pathType" "Prefix") (dict "path" "/favicon.svg" "pathType" "Exact") (dict "path" "/api" "pathType" "Prefix") -}}
+  {{- range .Values.guance_meta.ingress.hosts }}
+  {{- if ne (.path | default "/") "/" }}
+    {{- fail "guance_meta.ingress.hosts[].path must be / because embedded metadata UI is root-path only" }}
+  {{- end }}
+  - host: {{ .name }}
+    http:
+      paths:
+        {{- range $metadataIngressPaths }}
+        - path: {{ .path }}
+          pathType: {{ .pathType }}
+          backend:
+            {{- if $ingressApiIsStable }}
+            service:
+              name: {{ $metadataServiceName }}
+              port:
+                number: {{ $metadataServicePort }}
+            {{- else }}
+            serviceName: {{ $metadataServiceName }}
+            servicePort: http
+            {{- end }}
+        {{- end }}
+  {{- end -}}
+{{- if .Values.guance_meta.ingress.tls }}
+  tls:
+{{ toYaml .Values.guance_meta.ingress.tls | indent 4 }}
+{{- end -}}
+{{- end -}}

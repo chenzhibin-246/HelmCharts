@@ -1,0 +1,22 @@
+{{- if .Values.guance_select.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ template "guancedb.guance_select.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "guancedb.guance_select.labels" . | nindent 4 }}
+  {{- with .Values.guance_select.podDisruptionBudget.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+{{- if .Values.guance_select.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.guance_select.podDisruptionBudget.minAvailable }}
+{{- end }}
+{{- if .Values.guance_select.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ .Values.guance_select.podDisruptionBudget.maxUnavailable }}
+{{- end }}
+  selector:
+    matchLabels:
+      {{- include "guancedb.guance_select.matchLabels" . | nindent 6 }}
+{{- end }}

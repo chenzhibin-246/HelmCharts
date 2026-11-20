@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "scopedb.fullname" . }}-config
+data:
+  config.toml: |
+    [server.default_storage]
+    type = "s3"
+    endpoint = "{{ .Values.s3.endpoint }}"
+    virtual_host_style = {{ .Values.s3.virtualHostStyle }}
+    region = "{{ .Values.s3.region }}"
+    bucket = "{{ .Values.s3.bucket }}"
+
+    [server.meta]
+    pool_max_connection = 50
+
+    [server.http]
+    listen_addr = "0.0.0.0:6543"
+
+    [server.internal]
+    listen_addr = "0.0.0.0:6789"
+
+    [telemetry.logs.stderr]
+    filter = "INFO,ingest=ERROR"
+
+    [telemetry.logs.opentelemetry]
+    filter = "INFO,ingest=ERROR"
+
+    [telemetry.traces]
+    capture_log_filter = "INFO"
+
+    [telemetry.metrics.opentelemetry]
+    push_interval = "10s"
+
+    [runtime]

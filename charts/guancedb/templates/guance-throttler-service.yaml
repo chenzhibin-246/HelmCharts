@@ -1,0 +1,48 @@
+{{- if and .Values.guance_throttler.enabled -}}
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: {{ .Release.Namespace }}
+{{- if .Values.guance_throttler.service.annotations }}
+  annotations:
+{{ toYaml .Values.guance_throttler.service.annotations | indent 4}}
+{{- end }}
+  labels:
+    {{- include "guancedb.guance_throttler.labels" . | nindent 4 }}
+{{- if .Values.guance_throttler.service.labels }}
+{{ toYaml .Values.guance_throttler.service.labels | indent 4}}
+{{- end }}
+  name: {{ template "guancedb.guance_throttler.fullname" . }}
+spec:
+  clusterIP: {{ .Values.guance_throttler.service.clusterIP }}
+{{- if .Values.guance_throttler.service.externalIPs }}
+  externalIPs:
+{{ toYaml .Values.guance_throttler.service.externalIPs | indent 4 }}
+{{- end }}
+{{- if .Values.guance_throttler.service.loadBalancerIP }}
+  loadBalancerIP: {{ .Values.guance_throttler.service.loadBalancerIP }}
+{{- end }}
+{{- if .Values.guance_throttler.service.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+  {{- range $cidr := .Values.guance_throttler.service.loadBalancerSourceRanges }}
+    - {{ $cidr }}
+  {{- end }}
+{{- end }}
+  ports:
+    - name: http
+      port: {{ .Values.guance_throttler.service.servicePort }}
+      protocol: TCP
+      targetPort: http
+      {{- with .Values.guance_throttler.service.nodePort }}
+      nodePort: {{ . }}
+      {{- end }}
+  selector:
+    {{- include "guancedb.guance_throttler.labels" . | nindent 4 }}
+  type: "{{ .Values.guance_throttler.service.type }}"
+  {{- with .Values.guance_throttler.service.healthCheckNodePort }}
+  healthCheckNodePort: {{ . }}
+  {{- end }}
+  {{- with .Values.guance_throttler.service.externalTrafficPolicy }}
+  externalTrafficPolicy: {{ . }}
+  {{- end }}
+{{- end }}

@@ -1,0 +1,259 @@
+{{- if .Values.guance_select.enabled -}}
+{{- $selectArgs := .Values.guance_select.extraArgs | default dict -}}
+{{- $guanceSelectTenancy := "" -}}
+{{- if .Values.scopedb.enabled -}}
+  {{- $guanceSelectTenancy = required "guance_select.tenancy must be set to shared or dedicated" .Values.guance_select.tenancy -}}
+  {{- if not (has $guanceSelectTenancy (list "shared" "dedicated")) -}}
+    {{- fail (printf "guance_select.tenancy must be shared or dedicated, got %q" $guanceSelectTenancy) -}}
+  {{- end -}}
+  {{- if hasKey $selectArgs "search.scopeDB.enableDedicatedTenancy" -}}
+    {{- fail "search.scopeDB.enableDedicatedTenancy is rendered from guance_select.tenancy and must not be set in guance_select.extraArgs" -}}
+  {{- end -}}
+{{- end -}}
+{{- if and .Values.guance_select.queryQueue.enabled (not .Values.guance_select.queryQueue.acknowledgeSupersededByScopeDBQueue) -}}
+  {{- fail (list
+    "guance_select.queryQueue is superseded by ScopeDB's own queue and its per-statement resource limits,"
+    "which bound each query's rows and scanned bytes. Running both means queueing twice."
+    "Leave it disabled unless you have a specific reason to."
+    "To enable it anyway, set guance_select.queryQueue.acknowledgeSupersededByScopeDBQueue=true"
+    | join "\n") -}}
+{{- end -}}
+{{- $metaClientURL := include "guancedb.guance_meta.clientURL" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+{{- with .Values.guance_select.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+{{- end }}
+  labels:
+    {{- include "guancedb.guance_select.labels" . | nindent 4 }}
+{{- with .Values.guance_select.extraLabels }}
+{{ toYaml . | indent 4 }}
+{{- end }}
+  name: {{ template "guancedb.guance_select.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "guancedb.guance_select.matchLabels" . | nindent 6 }}
+{{- if not .Values.guance_select.horizontalPodAutoscaler.enabled }}
+  {{- if eq 0 (int .Values.guance_select.replicaCount) }}
+    {{ fail "invalid .Values.guance_select.replicaCount" }}
+  {{- end }}
+  replicas: {{ .Values.guance_select.replicaCount }}
+{{- end }}
+  {{- with .Values.guance_select.strategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  template:
+    metadata:
+      annotations:
+        {{ if .Values.alwaysRoll }}always-roll: {{ randAlpha 4 | quote }}{{ end }}
+        {{- if .Values.useDeprecatedDatakitAnnotation }}
+        {{- include "guancedb.datakitAnnotationDeprecated" "8481" | nindent 8 }}
+        {{- end }}
+    {{- if .Values.guance_select.podAnnotations }}
+{{ toYaml .Values.guance_select.podAnnotations | indent 8 }}
+    {{- end }}
+      labels:
+        {{- include "guancedb.guance_select.labels" . | nindent 8 }}
+{{- with .Values.guance_select.extraLabels }}
+{{ toYaml . | indent 8 }}
+{{- end }}
+    spec:
+      {{- if .Values.guance_select.priorityClassName }}
+      priorityClassName: "{{ .Values.guance_select.priorityClassName }}"
+      {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountToken }}
+      {{- with .Values.guance_select.initContainers }}
+      initContainers:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ template "guancedb.name" . }}-{{ .Values.guance_select.name }}
+          image: "{{ if .Values.image.registry }}{{ .Values.image.registry }}/guancedb/guance-select{{ else }}{{ .Values.guance_select.image.repository }}{{ end }}:{{ required "image tag must be set" (.Values.guance_select.image.tag | default .Values.image.tag | default .Chart.AppVersion) }}"
+          imagePullPolicy: "{{ or .Values.image.pullPolicy .Values.guance_select.image.pullPolicy }}"
+          {{- if .Values.guance_select.containerWorkingDir }}
+          workingDir: {{ .Values.guance_select.containerWorkingDir }}
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.guance_select.podSecurityContext | nindent 12 }}
+          args:
+            - --otel.endpoint=http://%{HOST_IP}:9529/otel
+            - {{ printf "%s=%s" "--cacheDataPath" .Values.guance_select.cache.mountPath | quote}}
+          {{- if and .Values.guance_storage.enabled (not .Values.guance_select.suppressStorageFQDNsRender) }}
+          {{- include "guancedb.guance_select.guance_storage-pod-fqdn" . | nindent 12 }}
+          {{- end }}
+          {{- if or .Values.streamAggr.enabled .Values.timeIndex.enabled }}
+            {{- include "guancedb.guance_select.guance_insert-service-fqdn" . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.doris.enabled }}
+            - --dorisUsername=user_read
+            {{- $dorisThrottlerURL := printf "http://%s.%s.svc.%s:%v"
+              (include "guancedb.guance_throttler.fullname" .)
+              .Release.Namespace
+              .Values.clusterDomainSuffix
+              .Values.guance_throttler.service.servicePort }}
+            - '--search.dorisThrottlerURL={{ $dorisThrottlerURL }}'
+            {{- range $ip := .Values.doris.feIPs -}}
+              {{- printf "- --dorisFENode=%s\n" $ip | nindent 12 }}
+            {{- end -}}
+          {{- end }}
+          {{- if .Values.scopedb.enabled }}
+            {{ if .Values.doris.enabled -}}
+              {{ fail "doris.enabled and scopedb.enabled cannot both be true" }}
+            {{ end -}}
+            - --scopeDB.node={{ .Values.scopedb.fullnameOverride }}
+            - --search.scopeDB.enableDedicatedTenancy={{ eq $guanceSelectTenancy "dedicated" }}
+          {{- if (eq 1 (len .Values.scopedb.nodegroups)) }}
+            - --scopeDB.nodegroup.ctl=default
+            - --scopeDB.nodegroup.job=default
+            - --scopeDB.nodegroup.query=default
+            - --scopeDB.nodegroup.largeQuery=default
+            - --scopeDB.nodegroup.systemQuery=default
+            - --scopeDB.nodegroup.detailQuery=default
+          {{- end }}
+          {{- end }}
+          {{- $setConcurrentGetIndexRequests := false }}
+          {{- $queryCPULimit := 0 }}
+          {{- range $key, $value := $selectArgs }}
+            {{- $valueToRender := $value }}
+            {{- if or (kindIs "float64" $value) (kindIs "float32" $value) }}
+              {{- if eq $value (floor $value) }}
+                {{- $valueToRender = printf "%.0f" $value }}
+              {{- end }}
+            {{- end }}
+            - --{{ $key }}={{ $valueToRender }}
+            {{- if and $.Values.scopedb.enabled (eq $key "maxConcurrentGetIndexRequests") }}
+              {{- fail (printf "%s should not be set manually" $key) }}
+            {{- end }}
+          {{- end }}
+          {{- if and $metaClientURL (not (hasKey $selectArgs "meta.addr")) }}
+            - {{ printf "%s=%s" "--meta.addr" $metaClientURL | quote }}
+          {{- end }}
+          {{- if not (hasKey $selectArgs "meta.cluster") }}
+            - {{ printf "%s=%s" "--meta.cluster" (.Values.guance_meta.cluster | default "default") | quote }}
+          {{- end }}
+          {{- if .Values.guance_select.queryQueue.enabled }}
+            - --search.queryQueue.redisAddr={{ .Values.guance_select.queryQueue.redisAddr }}
+            - --search.queryQueue.redisDB={{ .Values.guance_select.queryQueue.redisDB }}
+          {{- end }}
+
+          {{- if and .Values.scopedb.enabled }}
+            {{- range $i, $nodegroup := .Values.scopedb.nodegroups }}
+              {{- if and $nodegroup.resources $nodegroup.resources.limits $nodegroup.resources.limits.cpu }}
+                {{- $nodegroupReplicas := $nodegroup.replicaCount | default 1 }}
+                {{- if and $nodegroup.autoscaling $nodegroup.autoscaling.enabled }}
+                  {{- $nodegroupReplicas = $nodegroup.autoscaling.maxReplicas }}
+                {{- end }}
+                {{- if eq $nodegroup.name "query-meta" }}
+                  {{- $setConcurrentGetIndexRequests = true }}
+            - --maxConcurrentGetIndexRequests={{ ceil (divf (mul 10 $nodegroupReplicas (atoi (toString $nodegroup.resources.limits.cpu)))
+                                                                  $.Values.guance_select.replicaCount) }}
+                {{- end }}
+              {{- end }}
+            {{- end }}
+            {{- if not $setConcurrentGetIndexRequests }}
+              {{ fail "nodegroup ingest-meta missing or invalid" }}
+            {{- end }}
+          {{- end }}
+          env:
+            - name: HOST_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: TZ
+              value: {{ .Values.guance_select.timezone | quote }}
+          {{- with .Values.guance_select.env }}
+          {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.doris.enabled }}
+            - name: dorisPassword
+              valueFrom:
+                secretKeyRef:
+                  name: {{ template "guancedb.fullname" . }}
+                  key: dorisUserReadPassword
+          {{- end }}
+          {{- if .Values.guance_select.queryQueue.enabled }}
+            - name: search_queryQueue_redisPassword
+              valueFrom:
+                secretKeyRef:
+                  name: guancedb
+                  key: queryqueueRedisPassword
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 8481
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: {{ .Values.guance_select.probe.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.guance_select.probe.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.guance_select.probe.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.guance_select.probe.readiness.failureThreshold }}
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: {{ .Values.guance_select.probe.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.guance_select.probe.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.guance_select.probe.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.guance_select.probe.liveness.failureThreshold }}
+          volumeMounts:
+            - mountPath: {{ .Values.guance_select.cache.mountPath }}
+              name: cache-volume
+            {{- range .Values.guance_storage.extraHostPathMounts }}
+            - name: {{ .name }}
+              mountPath: {{ .mountPath }}
+              subPath: {{ .subPath }}
+              readOnly: {{ .readOnly }}
+            {{- end }}
+          {{- with .Values.guance_select.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- with .Values.guance_select.resources }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+        {{- with .Values.guance_select.extraContainers }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+      {{ toYaml .Values.imagePullSecrets | indent 2 }}
+    {{- end }}
+    {{- with .Values.guance_select.nodeSelector | default .Values.nodeSelector }}
+      nodeSelector:
+{{ toYaml . | indent 8 }}
+    {{- end }}
+    {{- if .Values.guance_select.securityContext }}
+      securityContext:
+{{ toYaml .Values.guance_select.securityContext | indent 8 }}
+    {{- end }}
+      serviceAccountName: {{ template "guancedb.serviceAccountName" . }}
+    {{- with .Values.guance_select.tolerations | default .Values.tolerations }}
+      tolerations:
+{{ toYaml . | indent 8 }}
+    {{- end }}
+    {{- if .Values.guance_select.affinity }}
+      affinity:
+{{ toYaml .Values.guance_select.affinity | indent 8 }}
+    {{- end }}
+    {{- if .Values.guance_select.topologySpreadConstraints }}
+      topologySpreadConstraints:
+{{ toYaml .Values.guance_select.topologySpreadConstraints | indent 8 }}
+    {{- end }}
+      volumes:
+        {{- with .Values.guance_select.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        - name: cache-volume
+        {{- if .Values.guance_select.persistentVolume.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ if .Values.guance_select.persistentVolume.existingClaim }}{{ .Values.guance_select.persistentVolume.existingClaim }}{{- else }}{{ template "guancedb.guance_select.fullname" . }}{{- end }}
+            {{- else }}
+          emptyDir: { }
+            {{- end -}}
+{{- end }}

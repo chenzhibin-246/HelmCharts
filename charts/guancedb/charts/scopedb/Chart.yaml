@@ -1,0 +1,9 @@
+apiVersion: v2
+appVersion: v0.5.34
+description: ScopeDB
+icon: https://www.scopedb.io/brand-kit/favicon.svg
+name: scopedb
+sources:
+- https://pubrepo.jiagouyun.com/chartrepo/scopedb
+type: application
+version: 0.1.0

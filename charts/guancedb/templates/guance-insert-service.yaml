@@ -1,0 +1,100 @@
+{{- if .Values.guance_insert.enabled -}}
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+{{- if .Values.guance_insert.service.annotations }}
+{{ toYaml .Values.guance_insert.service.annotations | indent 4}}
+{{- end }}
+{{- if not .Values.useDeprecatedDatakitAnnotation }}
+{{- include "guancedb.datakitAnnotations" "8480" | nindent 4 }}
+{{- end }}
+  labels:
+    {{- include "guancedb.guance_insert.labels" . | nindent 4 }}
+{{- if .Values.guance_insert.service.labels }}
+{{ toYaml .Values.guance_insert.service.labels | indent 4}}
+{{- end }}
+  name: {{ template "guancedb.guance_insert.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  clusterIP: {{ .Values.guance_insert.service.clusterIP }}
+{{- if .Values.guance_insert.service.externalIPs }}
+  externalIPs:
+{{ toYaml .Values.guance_insert.service.externalIPs | indent 4 }}
+{{- end }}
+{{- if .Values.guance_insert.service.loadBalancerIP }}
+  loadBalancerIP: {{ .Values.guance_insert.service.loadBalancerIP }}
+{{- end }}
+{{- if .Values.guance_insert.service.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+  {{- range $cidr := .Values.guance_insert.service.loadBalancerSourceRanges }}
+    - {{ $cidr }}
+  {{- end }}
+{{- end }}
+  ports:
+    - name: http
+      port: {{ .Values.guance_insert.service.servicePort }}
+      protocol: TCP
+      targetPort: {{ .Values.guance_insert.service.targetPort }}
+      {{ with .Values.guance_insert.service.nodePort }}
+      nodePort: {{ . }}
+      {{ end }}
+{{- range .Values.guance_insert.service.extraPorts }}
+    - name: {{ .name }}
+      port: {{ .port }}
+      protocol: TCP
+      targetPort: {{ .targetPort }}
+{{- end }}
+
+  selector:
+    {{- include "guancedb.guance_insert.matchLabels" . | nindent 4 }}
+  type: "{{ .Values.guance_insert.service.type }}"
+{{ range $i, $nodePort := .Values.guance_insert.service.perPodNodePorts }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+{{- if $.Values.guance_insert.service.annotations }}
+  annotations:
+{{ toYaml $.Values.guance_insert.service.annotations | indent 4}}
+{{- end }}
+  labels:
+    {{- include "guancedb.guance_insert.labels" $ | nindent 4 }}
+{{- if $.Values.guance_insert.service.labels }}
+{{ toYaml $.Values.guance_insert.service.labels | indent 4}}
+{{- end }}
+  name: {{ template "guancedb.guance_insert.fullname" $ }}-{{ $i }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+{{- if $.Values.guance_insert.service.externalIPs }}
+  externalIPs:
+{{ toYaml $.Values.guance_insert.service.externalIPs | indent 4 }}
+{{- end }}
+{{- if $.Values.guance_insert.service.loadBalancerIP }}
+  loadBalancerIP: {{ $.Values.guance_insert.service.loadBalancerIP }}
+{{- end }}
+{{- if $.Values.guance_insert.service.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+  {{- range $cidr := $.Values.guance_insert.service.loadBalancerSourceRanges }}
+    - {{ $cidr }}
+  {{- end }}
+{{- end }}
+  ports:
+    - name: http
+      port: {{ $.Values.guance_insert.service.servicePort }}
+      protocol: TCP
+      targetPort: {{ $.Values.guance_insert.service.targetPort }}
+      nodePort: {{ $nodePort }}
+{{- range $.Values.guance_insert.service.extraPorts }}
+    - name: {{ .name }}
+      port: {{ .port }}
+      protocol: TCP
+      targetPort: {{ .targetPort }}
+{{- end }}
+
+  selector:
+    {{- include "guancedb.guance_insert.matchLabels" $ | nindent 4 }}
+    statefulset.kubernetes.io/pod-name: {{ template "guancedb.guance_insert.fullname" $ }}-{{ $i }}
+  type: NodePort
+{{- end }}
+{{- end }}
