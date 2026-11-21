@@ -1,0 +1,70 @@
+# Deployment overlay for one RustFS instance on a single Kubernetes node.
+# Upstream: https://charts.rustfs.com/rustfs-1.0.6.tgz
+# Create the Secret in the release namespace with RUSTFS_ACCESS_KEY and RUSTFS_SECRET_KEY.
+# Provide a StorageClass with ReadWriteOnce storage for both claims.
+# For static local storage, provision a PV for each claim on the target node.
+# helm upgrade --install rustfs ./charts/rustfs -n rustfs -f ./charts/rustfs/values-single-node.yaml
+
+replicaCount: 1
+
+mode:
+  standalone:
+    enabled: true
+  distributed:
+    enabled: false
+
+secret:
+  existingSecret: rustfs-secret
+
+image:
+  rustfs:
+    repository: docker.m.daocloud.io/rustfs/rustfs
+    pullPolicy: IfNotPresent
+  initImage:
+    repository: docker.m.daocloud.io/library/busybox
+    pullPolicy: IfNotPresent
+    tag: "1.37.0"
+
+config:
+  rustfs:
+    address: ":9000"
+    console_enable: "true"
+    console_address: ":9001"
+    log_level: info
+    region: us-east-1
+    obs_log_directory: /logs
+    obs_environment: production
+
+service:
+  type: ClusterIP
+  endpoint:
+    port: 9000
+  console:
+    port: 9001
+
+ingress:
+  enabled: false
+
+gatewayApi:
+  enabled: false
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+nodeSelector:
+  kubernetes.io/os: linux
+
+affinity: {}
+
+storageclass:
+  name: rustfs-local
+  dataStorageSize: 10Gi
+  logStorageSize: 2Gi
+
+pdb:
+  create: false
