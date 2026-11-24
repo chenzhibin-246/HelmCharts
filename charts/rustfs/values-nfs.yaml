@@ -1,0 +1,43 @@
+mode:
+  standalone:
+    existingClaim:
+      dataClaim: rustfs-data-nfs
+      logsClaim: rustfs-logs-nfs
+
+storageclass:
+  name: nfs-csi
+  dataStorageSize: 10Gi
+  logStorageSize: 2Gi
+
+podSecurityContext:
+  fsGroupChangePolicy: OnRootMismatch
+
+extraManifests:
+  - apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: rustfs-data-nfs
+      namespace: rustfs
+      annotations:
+        helm.sh/resource-policy: keep
+    spec:
+      storageClassName: nfs-csi
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: 10Gi
+  - apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: rustfs-logs-nfs
+      namespace: rustfs
+      annotations:
+        helm.sh/resource-policy: keep
+    spec:
+      storageClassName: nfs-csi
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: 2Gi
