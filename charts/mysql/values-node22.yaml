@@ -1,0 +1,19 @@
+image:
+  registry: docker.m.daocloud.io
+
+auth:
+  existingSecret: mysql-auth
+
+tls:
+  enabled: true
+  requireSecureTransport: false
+  existingSecret: mysql-tls
+
+primary:
+  podSecurityContext:
+    fsGroup: 65534
+  containerSecurityContext:
+    runAsUser: 65534
+    runAsGroup: 65534
+  persistence:
+    storageClass: nfs-csi

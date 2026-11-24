@@ -1,0 +1,70 @@
+# Apply this overlay after values-logs.yaml on node .22.
+global:
+  storageClass: nfs-csi
+nodeSelector: null
+tolerations: []
+
+guance_meta:
+  mysql:
+    addr: mysql-mysql.middleware.svc.cluster.local:3306
+  kodo:
+    endpoint: http://kodo-inner.forethought-kodo:9527
+
+guance_insert:
+  replicaCount: 1
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution: []
+  persistentVolume:
+    size: 16Gi
+  resources:
+    limits: {cpu: "2", memory: 4Gi}
+    requests: {cpu: 100m, memory: 256Mi}
+  extraArgs:
+    fileQueue.maxTotalSize: "4294967296"
+
+guance_select:
+  replicaCount: 1
+  resources:
+    limits: {cpu: "2", memory: 3Gi}
+    requests: {cpu: 100m, memory: 256Mi}
+  extraArgs:
+    storageNode: guance-storage-0.guance-storage.middleware.svc.cluster.local:8401,guance-storage-1.guance-storage.middleware.svc.cluster.local:8401,guance-storage-2.guance-storage.middleware.svc.cluster.local:8401
+
+scopedb:
+  fullnameOverride: scopedb-logs
+  deployedVersion: v0.5.34
+  otlpHost: ""
+  nodeSelector: null
+  tolerations: []
+  s3:
+    bucket: guancedb-logs-node22
+    endpoint: http://rustfs-svc.rustfs.svc.cluster.local:9000
+    region: us-east-1
+    virtualHostStyle: false
+  nodegroups:
+    - name: query-meta
+      replicaCount: 1
+      resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {cpu: "1", memory: 2Gi}}
+    - name: ingest-meta
+      replicaCount: 1
+      resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {cpu: "1", memory: 2Gi}}
+    - name: ingest
+      replicaCount: 1
+      resources: {requests: {cpu: 250m, memory: 512Mi}, limits: {cpu: "2", memory: 2Gi}}
+    - name: system-query
+      replicaCount: 1
+      resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {cpu: "1", memory: 4Gi}}
+    - name: large-query
+      replicaCount: 1
+      resources: {requests: {cpu: 250m, memory: 512Mi}, limits: {cpu: "1", memory: 4Gi}}
+    - name: job
+      replicaCount: 1
+      resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {cpu: "1", memory: 4Gi}}
+    - name: rollover-job
+      replicaCount: 1
+      resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {cpu: "1", memory: 4Gi}}
+      diskSpill:
+        enabled: true
+        diskBudgetGi: 4
+        storageClass: nfs-csi
