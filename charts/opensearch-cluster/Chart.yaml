@@ -1,0 +1,22 @@
+apiVersion: v2
+appVersion: 2.3.0
+dependencies:
+- alias: opensearch-master
+  name: opensearch
+  repository: ""
+  version: 2.7.0
+- alias: opensearch-data
+  name: opensearch
+  repository: ""
+  version: 2.7.0
+- alias: opensearch-client
+  name: opensearch
+  repository: ""
+  version: 2.7.0
+- name: opensearch-dashboards
+  repository: ""
+  version: 2.5.3
+description: opensearch cluster
+name: opensearch-cluster
+type: application
+version: 0.0.2

@@ -1,0 +1,115 @@
+opensearch-master:
+  nodeGroup: master
+  roles:
+  - master
+  replicas: 1
+  image:
+    # 观测云做了定制版镜像，内置ik分词器
+    repository: pubrepo.guance.com/base/opensearch
+    tag: 2.4.1
+  # jvm堆大小设置为容器内存的一半，且上下界相等，防止内存抖动
+  opensearchJavaOpts: "-Xmx1g -Xms1g"
+  # opensearch之类的数据中间件最好将qos固定到guaranteed
+  resources:
+    requests:
+      cpu: 1
+      memory: 2Gi
+    limits:
+      cpu: 1
+      memory: 2Gi
+  extraEnvs:
+  # 匹配规则的索引可以自动被创建
+  # - name: action.auto_create_index
+  #   value: "+security*"
+  # 关闭https
+  - name: plugins.security.ssl.http.enabled
+    value: "false"
+  # 调度相关的配置请视实际情况而定，此处不做赘述
+  nodeSelector: {}
+  tolerations: []
+  topologySpreadConstraints: []
+  persistence:
+    # 非数据节点对存储没有刚需，以后可能改为无状态部署
+    # 如果您的集群没有存储后端，可以参考我们的OpenEBS实践文档
+    # https://docs.guance.com/deployment/openebs-install/
+    image: pubrepo.guance.com/base/busybox
+    imageTag: 1.35.0
+    storageClass: openebs-hostpath
+    size: 2Gi
+  
+opensearch-data:
+  nodeGroup: data
+  roles:
+  - ingest
+  - data
+  replicas: 1
+  image:
+    repository: pubrepo.guance.com/base/opensearch
+    tag: 2.4.1
+  opensearchJavaOpts: "-Xmx1g -Xms1g"
+  resources:
+    requests:
+      cpu: 1
+      memory: 2Gi
+    limits:
+      cpu: 1
+      memory: 2Gi
+  extraEnvs:
+  # - name: action.auto_create_index
+  #   value: "+security*"
+  - name: plugins.security.ssl.http.enabled
+    value: "false"
+  nodeSelector: {}
+  tolerations: []
+  topologySpreadConstraints: []
+  persistence:
+    # 数据节点的存储容量并非越大越好
+    # 容量规划可以参考我们的文档
+    # https://docs.guance.com/deployment/capacity-planning/
+    image: pubrepo.guance.com/base/busybox
+    imageTag: 1.35.0
+    storageClass: openebs-hostpath
+    size: 8Gi
+
+opensearch-client:
+  nodeGroup: client
+  # 协调节点用作客户端节点
+  # 按照opensearch官网的描述，helm安装opensearch时,协调节点不用配置roles
+  # 但这与我们的实践结果有出入，所以手动指定为协调节点
+  roles:
+  - coordinating
+  replicas: 1
+  image:
+    repository: pubrepo.guance.com/base/opensearch
+    tag: 2.4.1
+  opensearchJavaOpts: "-Xmx1g -Xms1g"
+  resources:
+    requests:
+      cpu: 1
+      memory: 2Gi
+    limits:
+      cpu: 1
+      memory: 2Gi
+  extraEnvs:
+  # - name: action.auto_create_index
+  #   value: "+security*"
+  - name: plugins.security.ssl.http.enabled
+    value: "false"
+  nodeSelector: {}
+  tolerations: []
+  topologySpreadConstraints: []
+  persistence:
+    image: pubrepo.guance.com/base/busybox
+    imageTag: 1.35.0
+    storageClass: openebs-hostpath
+    size: 2Gi
+
+opensearch-dashboards:
+  fullnameOverride: opensearch-dashboards
+  # 如果你开了https，这里的地址要改
+  opensearchHosts: http://opensearch-cluster-client:9200
+  image:
+    repository: pubrepo.guance.com/base/opensearch-dashboards
+    tag: 2.4.1
+  rbac:
+    create: false
